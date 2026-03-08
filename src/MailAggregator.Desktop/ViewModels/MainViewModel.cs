@@ -399,7 +399,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     private void OnNewEmailsReceived(object? sender, NewEmailsEventArgs e)
     {
-        Application.Current.Dispatcher.Invoke(() =>
+        System.Windows.Application.Current.Dispatcher.Invoke(() =>
         {
             StatusText = $"New mail from {e.AccountEmail} ({e.NewMessageCount} message(s))";
 

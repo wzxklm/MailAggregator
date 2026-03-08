@@ -21,7 +21,7 @@ public static class NotificationHelper
 
         _notifyIcon.BalloonTipClicked += (_, _) =>
         {
-            var mainWindow = Application.Current.MainWindow;
+            var mainWindow = System.Windows.Application.Current.MainWindow;
             if (mainWindow != null)
             {
                 mainWindow.Show();

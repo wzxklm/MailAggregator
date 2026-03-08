@@ -13,7 +13,7 @@ using Serilog;
 
 namespace MailAggregator.Desktop;
 
-public partial class App : Application
+public partial class App : System.Windows.Application
 {
     private ServiceProvider? _serviceProvider;
 
