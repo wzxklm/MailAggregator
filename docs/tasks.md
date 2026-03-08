@@ -8,7 +8,7 @@
 - **[并行]**：可启用多个 subagent 同时开发，任务之间无代码交叉
 - **[验证]**：阶段完成后的检查点，确认代码可编译、测试通过
 - 每个任务完成后，更新 CLAUDE.md 中的「开发进度」章节
-- 每个阶段完成后，执行 git commit，提交信息简述本阶段内容
+- 每个阶段完成后，执行 git commit，提交信息用英文简述本阶段内容
 
 ---
 
@@ -19,52 +19,91 @@
 ### 0.1 安装 .NET 8 SDK
 
 ```bash
+# 安装 libicu 系统依赖（.NET 运行时需要，否则报 ICU package 缺失错误）
+apt-get update -qq && apt-get install -y -qq libicu-dev
+
 # 安装 .NET 8 SDK（参考 Microsoft 官方脚本）
-wget https://dot.net/v1/dotnet-install.sh -O dotnet-install.sh
-chmod +x dotnet-install.sh
-./dotnet-install.sh --channel 8.0
+wget -q https://dot.net/v1/dotnet-install.sh -O /tmp/dotnet-install.sh
+chmod +x /tmp/dotnet-install.sh
+/tmp/dotnet-install.sh --channel 8.0
+
 # 配置环境变量（写入 ~/.bashrc）
+echo 'export DOTNET_ROOT=$HOME/.dotnet' >> ~/.bashrc
+echo 'export PATH=$PATH:$DOTNET_ROOT:$DOTNET_ROOT/tools' >> ~/.bashrc
 export DOTNET_ROOT=$HOME/.dotnet
 export PATH=$PATH:$DOTNET_ROOT:$DOTNET_ROOT/tools
+
+# 验证安装
+dotnet --version  # 应输出 8.0.x
 ```
 
 ### 0.2 创建解决方案与项目骨架
 
+> 注意：Linux 上没有 `dotnet new wpf` 模板，Desktop 项目需手动创建。
+
 ```bash
+# 创建解决方案和可用模板的项目
 dotnet new sln -n MailAggregator -o /workspace
 dotnet new classlib -n MailAggregator.Core -o src/MailAggregator.Core
-dotnet new wpf -n MailAggregator.Desktop -o src/MailAggregator.Desktop
 dotnet new xunit -n MailAggregator.Tests -o src/MailAggregator.Tests
+```
 
+手动创建 Desktop 项目（WPF 模板在 Linux 不可用）：
+
+1. 创建 `src/MailAggregator.Desktop/MailAggregator.Desktop.csproj`：
+```xml
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+</Project>
+```
+
+> `EnableWindowsTargeting` 属性是必需的，允许在 Linux 上 restore net8.0-windows 项目（但仍无法编译）。
+
+2. 创建基础 WPF 文件：`App.xaml` + `App.xaml.cs` + `MainWindow.xaml` + `MainWindow.xaml.cs`
+
+```bash
+# 将所有项目加入解决方案
 dotnet sln add src/MailAggregator.Core
 dotnet sln add src/MailAggregator.Desktop
 dotnet sln add src/MailAggregator.Tests
 
+# 添加项目引用
 dotnet add src/MailAggregator.Desktop reference src/MailAggregator.Core
 dotnet add src/MailAggregator.Tests reference src/MailAggregator.Core
 ```
 
 ### 0.3 安装 NuGet 依赖
 
+> 注意：net8.0 项目必须使用 8.x 版本的 Microsoft 包（EF Core、DI 等），最新版 (10.x) 仅支持 net10.0。
+
 Core 项目：
 ```bash
 cd src/MailAggregator.Core
 dotnet add package MailKit
-dotnet add package Microsoft.EntityFrameworkCore.Sqlite
-dotnet add package Microsoft.EntityFrameworkCore.Design
+dotnet add package Microsoft.EntityFrameworkCore.Sqlite --version "8.*"
+dotnet add package Microsoft.EntityFrameworkCore.Design --version "8.*"
 dotnet add package Serilog
 dotnet add package Serilog.Sinks.File
-dotnet add package Microsoft.Extensions.DependencyInjection.Abstractions
+dotnet add package Microsoft.Extensions.DependencyInjection.Abstractions --version "8.*"
 dotnet add package System.Security.Cryptography.ProtectedData
 ```
 
 Desktop 项目：
+> 注意：`Serilog.Extensions.Logging` 10.x 依赖 `Microsoft.Extensions.DependencyInjection` 10.x，与 DI 8.x 产生版本降级冲突。需将两者都限制在 8.x。
+
 ```bash
 cd src/MailAggregator.Desktop
 dotnet add package CommunityToolkit.Mvvm
-dotnet add package Microsoft.Extensions.DependencyInjection
+dotnet add package Microsoft.Extensions.DependencyInjection --version "8.0.1"
 dotnet add package Microsoft.Web.WebView2
-dotnet add package Serilog.Extensions.Logging
+dotnet add package Serilog.Extensions.Logging --version "8.*"
 ```
 
 Tests 项目：
@@ -75,6 +114,8 @@ dotnet add package FluentAssertions
 ```
 
 ### 0.4 创建目录结构
+
+创建目录并添加 `.gitkeep` 文件以保留空目录：
 
 ```
 src/MailAggregator.Core/
@@ -93,10 +134,22 @@ src/MailAggregator.Desktop/
 └── Resources/
 ```
 
+```bash
+# 每个空目录下放置 .gitkeep
+for dir in Models Services/Auth Services/Mail Services/Sync Services/Discovery Data; do
+  touch src/MailAggregator.Core/$dir/.gitkeep
+done
+for dir in Views ViewModels Converters Resources; do
+  touch src/MailAggregator.Desktop/$dir/.gitkeep
+done
+```
+
 ### 0.5 验证环境
 
 ```bash
-dotnet build MailAggregator.sln  # Core 和 Tests 应能编译（Desktop 在 Linux 上会跳过或报 WPF 警告，这是预期行为）
+# 分别构建 Core 和 Tests（不能 build 整个 sln，Desktop 在 Linux 无法编译）
+dotnet build src/MailAggregator.Core
+dotnet build src/MailAggregator.Tests
 dotnet test src/MailAggregator.Tests
 ```
 
@@ -106,8 +159,11 @@ dotnet test src/MailAggregator.Tests
 
 ### 0.7 Git 提交
 
-```
-提交信息：搭建项目骨架，配置 .NET 8 开发环境和 NuGet 依赖
+```bash
+# 先创建 .gitignore（排除 bin/, obj/, .vs/, *.user 等）
+# 然后提交
+git add .gitignore CLAUDE.md MailAggregator.sln src/
+git commit -m "Set up project skeleton with .NET 8 dev environment and NuGet dependencies"
 ```
 
 ---
