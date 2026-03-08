@@ -10,9 +10,9 @@ Running inside a DevContainer (Ubuntu 22.04, CUDA 12.4). See `.devcontainer/Dock
 
 # 3. Development Progress
 
-- Current phase: Phase 3 (Mail Protocol Layer)
-- Completed: Phase 0 — .NET 8 SDK, solution skeleton, NuGet dependencies, directory structure; Phase 1 — Data models, EF Core SQLite DbContext, AES-256-GCM credential encryption; Phase 2 — AutoDiscovery service (5-level fallback), OAuth PKCE service, Password auth service
-- In progress: Pending Phase 3 start
+- Current phase: Phase 4 (Account Management & Background Services)
+- Completed: Phase 0 — .NET 8 SDK, solution skeleton, NuGet dependencies, directory structure; Phase 1 — Data models, EF Core SQLite DbContext, AES-256-GCM credential encryption; Phase 2 — AutoDiscovery service (5-level fallback), OAuth PKCE service, Password auth service; Phase 3 — IMAP/SMTP connection management (MailConnectionHelper shared logic), EmailSyncService (folder sync, initial/incremental sync, flags, attachments, move, delete), EmailSendService (compose, reply, reply-all, forward)
+- In progress: Pending Phase 4 start
 
 # 4. Environment Status
 
@@ -23,7 +23,7 @@ Running inside a DevContainer (Ubuntu 22.04, CUDA 12.4). See `.devcontainer/Dock
 - .NET SDK: 8.0.418
 - NuGet packages: Configured (MailKit, EF Core SQLite, Serilog, CommunityToolkit.Mvvm, etc.)
 - Project buildable: Yes (Core + Tests on Linux; Desktop is net8.0-windows, requires EnableWindowsTargeting on Linux)
-- Tests passing: 85/85
+- Tests passing: 116/116
 
 # 5. Coding Conventions
 
@@ -33,6 +33,8 @@ Running inside a DevContainer (Ubuntu 22.04, CUDA 12.4). See `.devcontainer/Dock
 - Interface naming: `I` prefix (e.g. `IEmailSyncService`)
 - Sensitive data (passwords, tokens) must be encrypted before storage, never store in plaintext
 - Use Serilog for logging, log all key operations (connections, sync, errors)
+- When MailKit's `MailFolder` conflicts with `Models.MailFolder`, use `using LocalMailFolder = MailAggregator.Core.Models.MailFolder` alias
+- Shared connection logic (auth, proxy, encryption mapping) goes in `MailConnectionHelper`, not duplicated per protocol
 
 # 6. AI Workflow Rules
 
