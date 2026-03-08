@@ -45,13 +45,14 @@ public class ImapConnectionPool : IImapConnectionPool
 
     private void ReturnToPool(int accountId, ImapClient client)
     {
-        if (_disposed || !client.IsConnected)
+        if (_disposed || !client.IsConnected || !client.IsAuthenticated)
         {
             DisposeClient(client);
             return;
         }
 
         var queue = _pool.GetOrAdd(accountId, _ => new ConcurrentQueue<ImapClient>());
+        // Allow slight over-count rather than using a lock; the Count check is best-effort
         if (queue.Count < MaxPoolSizePerAccount)
         {
             queue.Enqueue(client);

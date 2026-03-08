@@ -2,20 +2,53 @@
 
 Running inside a DevContainer (Ubuntu 22.04, CUDA 12.4). See `.devcontainer/Dockerfile` and `docker-compose.yml` for details.
 
-# 2. Project Documentation
+# 2. Project Structure
+
+```
+/workspace/
+├── MailAggregator.sln                  # Solution file (3 projects)
+├── CLAUDE.md
+├── .devcontainer/                      # DevContainer (Ubuntu 22.04 + .NET 8 + CUDA 12.4)
+├── .github/workflows/build.yml        # CI/CD (tag-triggered release)
+├── docs/                              # requirements.md, architecture.md, tasks.md
+└── src/
+    ├── MailAggregator.Core/            # net8.0, cross-platform business logic
+    │   ├── Models/                     # Account, EmailMessage, MailFolder, ServerConfiguration, etc.
+    │   ├── Data/                       # MailAggregatorDbContext, DatabaseInitializer (EF Core SQLite)
+    │   └── Services/
+    │       ├── Auth/                   # CredentialEncryptionService (AES-256-GCM), OAuthService (PKCE), PasswordAuthService
+    │       ├── Discovery/             # AutoDiscoveryService (5-level fallback)
+    │       ├── Mail/                  # MailConnectionHelper, ImapConnectionPool, EmailSyncService, EmailSendService
+    │       ├── AccountManagement/     # AccountService (CRUD + validation)
+    │       └── Sync/                  # SyncManager (IMAP IDLE, exponential backoff)
+    │
+    ├── MailAggregator.Desktop/         # net8.0-windows, WPF UI (MVVM)
+    │   ├── Views/                     # MainWindow, AddAccountWindow, AccountListWindow, ComposeWindow
+    │   ├── ViewModels/                # MainViewModel, AddAccountViewModel, AccountListViewModel, ComposeViewModel
+    │   ├── Converters/                # BoolToVisibility, BoolToFontWeight, NullToVisibility, FileSize
+    │   ├── Resources/Styles.xaml      # App-level styles and converters
+    │   ├── App.xaml / App.xaml.cs     # DI container setup, entry point
+    │   └── MailAggregator.Desktop.csproj
+    │
+    └── MailAggregator.Tests/           # net8.0, xUnit + Moq + FluentAssertions (163 tests)
+        ├── Data/                      # DbContext tests
+        └── Services/                  # Mirror of Core/Services: Auth, Discovery, Mail, AccountManagement, Sync
+```
+
+# 3. Project Documentation
 
 - Requirements: docs/requirements.md
 - Architecture: docs/architecture.md
 - Task Breakdown: docs/tasks.md (AI-oriented, tasks ordered by dependencies)
 
-# 3. Development Progress
+# 4. Development Progress
 
 - Current phase: Phase 6 (CI/CD) — Complete
 - Completed: Phase 0 — .NET 8 SDK, solution skeleton, NuGet dependencies, directory structure; Phase 1 — Data models, EF Core SQLite DbContext, AES-256-GCM credential encryption; Phase 2 — AutoDiscovery service (5-level fallback), OAuth PKCE service, Password auth service; Phase 3 — IMAP/SMTP connection management (MailConnectionHelper shared logic), EmailSyncService (folder sync, initial/incremental sync, flags, attachments, move, delete), EmailSendService (compose, reply, reply-all, forward); Phase 4 — AccountService (add/edit/delete/list accounts, AutoDiscovery+auth integration, connection validation), SyncManager (per-account IMAP IDLE background sync, exponential backoff reconnection, NewEmailsReceived event); Phase 5 — WPF UI layer (DI container, three-pane MainWindow, account wizard, inbox/unified inbox, compose/reply/forward, WebView2 email preview, toast notifications); Phase 6 — GitHub Actions CI/CD (tag-triggered build, test, publish win-x64 self-contained, GitHub Release upload)
 - In progress: All phases complete
 - Latest release: v1.0.4
 
-# 4. Environment Status
+# 5. Environment Status
 
 - OS: Ubuntu 22.04 (x86_64, DevContainer)
 - Git: 2.34.1
@@ -26,7 +59,7 @@ Running inside a DevContainer (Ubuntu 22.04, CUDA 12.4). See `.devcontainer/Dock
 - Project buildable: Yes (Core + Tests on Linux; Desktop is net8.0-windows, requires EnableWindowsTargeting on Linux)
 - Tests passing: 163/163
 
-# 5. Coding Conventions
+# 6. Coding Conventions
 
 - Core project TargetFramework: `net8.0` (cross-platform, buildable and testable on Linux)
 - Desktop project TargetFramework: `net8.0-windows` (Windows only, cannot build on Linux)
@@ -42,14 +75,14 @@ Running inside a DevContainer (Ubuntu 22.04, CUDA 12.4). See `.devcontainer/Dock
 - Use `ToListAsync()` for EF Core queries, never `Task.Run(() => query.ToList())` (DbContext is not thread-safe)
 - Desktop project requires `UseWindowsForms=true` for NotifyIcon (toast notifications)
 
-# 6. CI/CD
+# 7. CI/CD
 
 - CI/CD is tag-triggered: only `v*` tags (e.g. `v1.0.4`) trigger the GitHub Actions workflow
 - To release: `git tag v<version> && git push origin v<version>`
 - Workflow: `.github/workflows/build.yml` — builds on `windows-latest`, runs tests, publishes `win-x64` self-contained, uploads to GitHub Releases
 - Regular `git push` to `main` does NOT trigger CI/CD
 
-# 7. AI Workflow Rules
+# 8. AI Workflow Rules
 
 - Follow the phase order defined in docs/tasks.md
 - Phases marked [parallel] can use subagents for concurrent development; [sequential] phases must run in order

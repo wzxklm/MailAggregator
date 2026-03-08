@@ -84,7 +84,7 @@ public class EmailSyncService : IEmailSyncService
         var removedFolders = localFolders.Where(f => !serverFolderNames.Contains(f.FullName)).ToList();
         _dbContext.Folders.RemoveRange(removedFolders);
 
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        await SaveChangesSafeAsync(cancellationToken);
 
         _logger.Information("Synced {Count} folders for {Email}", serverFolderNames.Count, account.EmailAddress);
 
@@ -125,7 +125,7 @@ public class EmailSyncService : IEmailSyncService
         folder.UnreadCount = imapFolder.Unread;
 
         _dbContext.Folders.Update(folder);
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        await SaveChangesSafeAsync(cancellationToken);
 
         await imapFolder.CloseAsync(false, cancellationToken);
     }
@@ -157,7 +157,7 @@ public class EmailSyncService : IEmailSyncService
             _logger.Warning("Folder {Folder} is not selectable for {Email}, removing from local cache",
                 folder.FullName, account.EmailAddress);
             _dbContext.Folders.Remove(folder);
-            await _dbContext.SaveChangesAsync(cancellationToken);
+            await SaveChangesSafeAsync(cancellationToken);
             return;
         }
 
@@ -203,7 +203,7 @@ public class EmailSyncService : IEmailSyncService
         folder.UnreadCount = imapFolder.Unread;
 
         _dbContext.Folders.Update(folder);
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        await SaveChangesSafeAsync(cancellationToken);
 
         await imapFolder.CloseAsync(false, cancellationToken);
     }
@@ -357,6 +357,68 @@ public class EmailSyncService : IEmailSyncService
         _logger.Information("Moved message UID {Uid} to Trash for {Email}", message.Uid, account.EmailAddress);
     }
 
+    public async Task FetchMessageBodyAsync(Account account, EmailMessage message, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(account);
+        ArgumentNullException.ThrowIfNull(message);
+
+        var folder = await _dbContext.Folders.FindAsync(new object[] { message.FolderId }, cancellationToken)
+            ?? throw new InvalidOperationException($"Folder {message.FolderId} not found.");
+
+        using var pooled = await _connectionPool.GetConnectionAsync(account, cancellationToken);
+        var imapFolder = await pooled.Client.GetFolderAsync(folder.FullName, cancellationToken);
+        await imapFolder.OpenAsync(FolderAccess.ReadOnly, cancellationToken);
+
+        var uid = new UniqueId(message.Uid);
+        var mimeMessage = await imapFolder.GetMessageAsync(uid, cancellationToken);
+
+        message.BodyText = mimeMessage.TextBody;
+        message.BodyHtml = mimeMessage.HtmlBody;
+        if (mimeMessage.References != null && mimeMessage.References.Count > 0)
+            message.References = string.Join(" ", mimeMessage.References);
+
+        // Cache attachment metadata if not already present
+        if (message.Attachments.Count == 0)
+        {
+            foreach (var attachment in mimeMessage.Attachments.OfType<MimePart>())
+            {
+                message.Attachments.Add(new EmailAttachment
+                {
+                    FileName = attachment.FileName ?? "unnamed",
+                    ContentType = attachment.ContentType?.MimeType,
+                    Size = attachment.Content?.Stream?.Length ?? 0,
+                    ContentId = attachment.ContentId
+                });
+            }
+        }
+
+        message.HasAttachments = message.Attachments.Count > 0;
+
+        var tracked = _dbContext.ChangeTracker.Entries<EmailMessage>()
+            .FirstOrDefault(e => e.Entity.Id == message.Id);
+        if (tracked != null)
+        {
+            tracked.Entity.BodyText = message.BodyText;
+            tracked.Entity.BodyHtml = message.BodyHtml;
+            tracked.Entity.References = message.References;
+            tracked.Entity.HasAttachments = message.HasAttachments;
+        }
+        else
+        {
+            _dbContext.Messages.Attach(message);
+            _dbContext.Entry(message).Property(m => m.BodyText).IsModified = true;
+            _dbContext.Entry(message).Property(m => m.BodyHtml).IsModified = true;
+            _dbContext.Entry(message).Property(m => m.References).IsModified = true;
+            _dbContext.Entry(message).Property(m => m.HasAttachments).IsModified = true;
+        }
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        await imapFolder.CloseAsync(false, cancellationToken);
+
+        _logger.Debug("Fetched body for UID {Uid} in {Folder} for {Email}",
+            message.Uid, folder.FullName, account.EmailAddress);
+    }
+
     private async Task FetchAndCacheMessagesAsync(
         IMailFolder imapFolder,
         LocalMailFolder localFolder,
@@ -408,46 +470,21 @@ public class EmailSyncService : IEmailSyncService
                 HasAttachments = summary.Attachments?.Any() ?? false
             };
 
-            // Fetch full message body
-            try
-            {
-                var mimeMessage = await imapFolder.GetMessageAsync(summary.UniqueId, cancellationToken);
-                emailMessage.BodyText = mimeMessage.TextBody;
-                emailMessage.BodyHtml = mimeMessage.HtmlBody;
-                if (mimeMessage.References != null && mimeMessage.References.Count > 0)
-                    emailMessage.References = string.Join(" ", mimeMessage.References);
-
-                // Cache attachment metadata
-                foreach (var attachment in mimeMessage.Attachments.OfType<MimePart>())
-                {
-                    emailMessage.Attachments.Add(new EmailAttachment
-                    {
-                        FileName = attachment.FileName ?? "unnamed",
-                        ContentType = attachment.ContentType?.MimeType,
-                        Size = attachment.Content?.Stream?.Length ?? 0,
-                        ContentId = attachment.ContentId
-                    });
-                }
-
-                emailMessage.HasAttachments = emailMessage.Attachments.Count > 0;
-            }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex, "Failed to fetch body for UID {Uid} in {Folder}", summary.UniqueId.Id, localFolder.FullName);
-            }
+            // Body and attachments are fetched lazily when the user opens the email
+            // (via FetchMessageBodyAsync). This avoids N IMAP round-trips during sync.
 
             _dbContext.Messages.Add(emailMessage);
             processedInBatch++;
 
             if (processedInBatch >= batchSize)
             {
-                await _dbContext.SaveChangesAsync(cancellationToken);
+                await SaveChangesSafeAsync(cancellationToken);
                 processedInBatch = 0;
             }
         }
 
         if (processedInBatch > 0)
-            await _dbContext.SaveChangesAsync(cancellationToken);
+            await SaveChangesSafeAsync(cancellationToken);
     }
 
     private async Task DetectDeletedMessagesAsync(IMailFolder imapFolder, LocalMailFolder localFolder, CancellationToken cancellationToken)
@@ -464,12 +501,12 @@ public class EmailSyncService : IEmailSyncService
 
         if (deletedUids.Count > 0)
         {
-            var deletedMessages = await _dbContext.Messages
+            // Use ExecuteDeleteAsync to delete in a single SQL statement without loading entities
+            var count = await _dbContext.Messages
                 .Where(m => m.FolderId == localFolder.Id && deletedUids.Contains(m.Uid))
-                .ToListAsync(cancellationToken);
+                .ExecuteDeleteAsync(cancellationToken);
 
-            _dbContext.Messages.RemoveRange(deletedMessages);
-            _logger.Information("Detected {Count} deleted messages in {Folder}", deletedUids.Count, localFolder.FullName);
+            _logger.Information("Detected and removed {Count} deleted messages in {Folder}", count, localFolder.FullName);
         }
     }
 
@@ -489,6 +526,31 @@ public class EmailSyncService : IEmailSyncService
         if (addresses == null || addresses.Count == 0) return string.Empty;
         return string.Join(", ", addresses.Mailboxes.Select(m =>
             string.IsNullOrEmpty(m.Name) ? m.Address : $"{m.Name} <{m.Address}>"));
+    }
+
+    /// <summary>
+    /// Saves changes, gracefully handling concurrency conflicts from parallel sync operations.
+    /// Conflicting (stale) entities are detached and remaining changes are retried.
+    /// </summary>
+    private async Task SaveChangesSafeAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException ex)
+        {
+            _logger.Warning("Concurrency conflict on {Count} entity(ies), detaching stale entries and retrying",
+                ex.Entries.Count);
+            foreach (var entry in ex.Entries)
+            {
+                entry.State = EntityState.Detached;
+            }
+            if (_dbContext.ChangeTracker.HasChanges())
+            {
+                await _dbContext.SaveChangesAsync(cancellationToken);
+            }
+        }
     }
 
     private static MimePart? FindAttachmentPart(MimeMessage message, EmailAttachment attachment)

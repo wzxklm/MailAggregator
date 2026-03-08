@@ -53,4 +53,10 @@ public interface IEmailSyncService
     /// Deletes a message by moving it to the Trash folder (identified by \Trash SPECIAL-USE).
     /// </summary>
     Task DeleteMessageAsync(Account account, EmailMessage message, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Fetches the full message body and attachment metadata from IMAP for a message
+    /// whose body was not cached during sync. Updates the local database.
+    /// </summary>
+    Task FetchMessageBodyAsync(Account account, EmailMessage message, CancellationToken cancellationToken = default);
 }

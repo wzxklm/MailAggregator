@@ -122,6 +122,7 @@ public class MailAggregatorDbContext : DbContext
             entity.HasIndex(e => new { e.FolderId, e.Uid }).IsUnique();
             entity.HasIndex(e => e.AccountId);
             entity.HasIndex(e => e.DateSent);
+            entity.HasIndex(e => new { e.FolderId, e.DateSent });
         });
 
         // EmailAttachment
@@ -135,6 +136,7 @@ public class MailAggregatorDbContext : DbContext
                 .WithMany(m => m.Attachments)
                 .HasForeignKey(e => e.EmailMessageId)
                 .OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(e => e.EmailMessageId);
         });
     }
 }

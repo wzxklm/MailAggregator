@@ -18,6 +18,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private readonly IEmailSyncService _emailSyncService;
     private readonly ISyncManager _syncManager;
     private readonly ILogger _logger;
+    private CancellationTokenSource? _folderSwitchCts;
 
     [ObservableProperty]
     private ObservableCollection<AccountFolderNode> _folderTree = [];
@@ -60,6 +61,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public void Dispose()
     {
         _syncManager.NewEmailsReceived -= OnNewEmailsReceived;
+        _folderSwitchCts?.Cancel();
+        _folderSwitchCts?.Dispose();
     }
 
     public async Task InitializeAsync()
@@ -89,7 +92,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
             });
             var results = await Task.WhenAll(syncTasks);
 
-            FolderTree.Clear();
+            var newTree = new ObservableCollection<AccountFolderNode>();
             foreach (var (account, folders) in results)
             {
                 var accountNode = new AccountFolderNode
@@ -110,7 +113,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
                     });
                 }
 
-                FolderTree.Add(accountNode);
+                newTree.Add(accountNode);
 
                 // Start background sync
                 if (account.IsEnabled)
@@ -120,6 +123,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
                         TaskContinuationOptions.OnlyOnFaulted);
                 }
             }
+            FolderTree = newTree;
 
             // Select first inbox by default
             var firstInbox = FolderTree
@@ -148,6 +152,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
     {
         if (node == null || node.IsAccount) return;
 
+        // Cancel any previous folder load operation
+        _folderSwitchCts?.Cancel();
+        _folderSwitchCts?.Dispose();
+        _folderSwitchCts = new CancellationTokenSource();
+        var ct = _folderSwitchCts.Token;
+
         SelectedFolder = node;
 
         try
@@ -155,10 +165,15 @@ public partial class MainViewModel : ObservableObject, IDisposable
             StatusText = $"Loading {node.DisplayName}...";
             IsSyncing = true;
 
-            await _emailSyncService.SyncIncrementalAsync(node.Account!, node.Folder!);
-            await LoadEmailsForCurrentViewAsync();
+            await _emailSyncService.SyncIncrementalAsync(node.Account!, node.Folder!, ct);
+            ct.ThrowIfCancellationRequested();
+            await LoadEmailsForCurrentViewAsync(ct);
 
             StatusText = $"{node.DisplayName} - {Emails.Count} message(s)";
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // User switched to another folder, silently abort
         }
         catch (Exception ex)
         {
@@ -222,7 +237,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         await LoadEmailsForCurrentViewAsync();
     }
 
-    private async Task LoadEmailsForCurrentViewAsync()
+    private async Task LoadEmailsForCurrentViewAsync(CancellationToken cancellationToken = default)
     {
         using var scope = App.Services.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<Core.Data.MailAggregatorDbContext>();
@@ -273,7 +288,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 CachedAt = m.CachedAt
             })
             .Take(200)
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
 
         Emails = new ObservableCollection<EmailMessage>(messages);
     }
@@ -388,12 +403,20 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
             if (fullMessage != null)
             {
-                // Update the selected email with full body data
+                // If body not cached yet, fetch from IMAP on demand
+                if (fullMessage.BodyHtml == null && fullMessage.BodyText == null)
+                {
+                    var account = FindAccountById(listMessage.AccountId);
+                    if (account != null)
+                    {
+                        await _emailSyncService.FetchMessageBodyAsync(account, fullMessage);
+                    }
+                }
+
                 listMessage.BodyHtml = fullMessage.BodyHtml;
                 listMessage.BodyText = fullMessage.BodyText;
                 listMessage.Attachments = fullMessage.Attachments;
 
-                // Notify the view to update WebView2
                 OnPropertyChanged(nameof(SelectedEmail));
             }
 
@@ -411,12 +434,71 @@ public partial class MainViewModel : ObservableObject, IDisposable
         {
             StatusText = $"New mail from {e.AccountEmail} ({e.NewMessageCount} message(s))";
 
-            _ = LoadEmailsForCurrentViewAsync().ContinueWith(t =>
+            _ = InsertNewEmailsAsync(e.AccountId).ContinueWith(t =>
                 _logger.Error(t.Exception, "Failed to refresh email list"),
                 TaskContinuationOptions.OnlyOnFaulted);
 
             NotificationHelper.ShowNewMailNotification(e.AccountEmail, e.NewMessageCount);
         });
+    }
+
+    private async Task InsertNewEmailsAsync(int accountId)
+    {
+        try
+        {
+            using var scope = App.Services.CreateScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<Core.Data.MailAggregatorDbContext>();
+
+            // Determine which folder IDs are currently displayed
+            var visibleFolderIds = new List<int>();
+            if (SelectedFolder?.Folder != null)
+            {
+                visibleFolderIds.Add(SelectedFolder.Folder.Id);
+            }
+            else
+            {
+                // Unified inbox mode
+                visibleFolderIds = FolderTree
+                    .SelectMany(a => a.Children)
+                    .Where(f => f.Folder?.SpecialUse == SpecialFolderType.Inbox)
+                    .Select(f => f.Folder!.Id)
+                    .ToList();
+            }
+
+            if (visibleFolderIds.Count == 0) return;
+
+            // Only fetch messages newer than what we already have
+            var latestDate = Emails.FirstOrDefault()?.DateSent ?? DateTimeOffset.MinValue;
+
+            var newMessages = await dbContext.Messages
+                .Where(m => m.AccountId == accountId
+                    && visibleFolderIds.Contains(m.FolderId)
+                    && m.DateSent > latestDate)
+                .OrderByDescending(m => m.DateSent)
+                .Select(m => new EmailMessage
+                {
+                    Id = m.Id, AccountId = m.AccountId, FolderId = m.FolderId,
+                    Uid = m.Uid, MessageId = m.MessageId, InReplyTo = m.InReplyTo,
+                    References = m.References, FromAddress = m.FromAddress,
+                    FromName = m.FromName, ToAddresses = m.ToAddresses,
+                    CcAddresses = m.CcAddresses, Subject = m.Subject,
+                    DateSent = m.DateSent, PreviewText = m.PreviewText,
+                    IsRead = m.IsRead, HasAttachments = m.HasAttachments,
+                    CachedAt = m.CachedAt
+                })
+                .ToListAsync();
+
+            // Prepend new messages and replace collection in one notification
+            if (newMessages.Count > 0)
+            {
+                Emails = new ObservableCollection<EmailMessage>(newMessages.Concat(Emails));
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Incremental email insert failed, falling back to full reload");
+            await LoadEmailsForCurrentViewAsync();
+        }
     }
 }
 
