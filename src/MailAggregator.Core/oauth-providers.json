@@ -1,0 +1,42 @@
+[
+  {
+    "name": "Gmail",
+    "serverHosts": ["imap.gmail.com", "smtp.gmail.com"],
+    "clientId": "",
+    "authorizationEndpoint": "https://accounts.google.com/o/oauth2/v2/auth",
+    "tokenEndpoint": "https://oauth2.googleapis.com/token",
+    "scopes": ["https://mail.google.com/"]
+  },
+  {
+    "name": "Microsoft",
+    "serverHosts": ["outlook.office365.com", "smtp.office365.com", "smtp-mail.outlook.com"],
+    "clientId": "",
+    "authorizationEndpoint": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+    "tokenEndpoint": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+    "scopes": ["https://outlook.office365.com/IMAP.AccessAsUser.All", "https://outlook.office365.com/SMTP.Send", "offline_access"]
+  },
+  {
+    "name": "Yahoo",
+    "serverHosts": ["imap.mail.yahoo.com", "smtp.mail.yahoo.com"],
+    "clientId": "",
+    "authorizationEndpoint": "https://api.login.yahoo.com/oauth2/request_auth",
+    "tokenEndpoint": "https://api.login.yahoo.com/oauth2/get_token",
+    "scopes": ["mail-w"]
+  },
+  {
+    "name": "AOL",
+    "serverHosts": ["imap.aol.com", "smtp.aol.com"],
+    "clientId": "",
+    "authorizationEndpoint": "https://api.login.aol.com/oauth2/request_auth",
+    "tokenEndpoint": "https://api.login.aol.com/oauth2/get_token",
+    "scopes": ["mail-w"]
+  },
+  {
+    "name": "Fastmail",
+    "serverHosts": ["imap.fastmail.com", "smtp.fastmail.com"],
+    "clientId": "",
+    "authorizationEndpoint": "https://api.fastmail.com/oauth/authorize",
+    "tokenEndpoint": "https://api.fastmail.com/oauth/refresh",
+    "scopes": ["urn:ietf:params:jmap:mail"]
+  }
+]

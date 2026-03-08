@@ -10,9 +10,9 @@ Running inside a DevContainer (Ubuntu 22.04, CUDA 12.4). See `.devcontainer/Dock
 
 # 3. Development Progress
 
-- Current phase: Phase 2 (Authentication & Discovery)
-- Completed: Phase 0 — .NET 8 SDK, solution skeleton, NuGet dependencies, directory structure; Phase 1 — Data models (Account, EmailMessage, EmailAttachment, MailFolder), EF Core SQLite DbContext, AES-256-GCM credential encryption with DPAPI/dev key protectors
-- In progress: Pending Phase 2 start
+- Current phase: Phase 3 (Mail Protocol Layer)
+- Completed: Phase 0 — .NET 8 SDK, solution skeleton, NuGet dependencies, directory structure; Phase 1 — Data models, EF Core SQLite DbContext, AES-256-GCM credential encryption; Phase 2 — AutoDiscovery service (5-level fallback), OAuth PKCE service, Password auth service
+- In progress: Pending Phase 3 start
 
 # 4. Environment Status
 
@@ -23,7 +23,7 @@ Running inside a DevContainer (Ubuntu 22.04, CUDA 12.4). See `.devcontainer/Dock
 - .NET SDK: 8.0.418
 - NuGet packages: Configured (MailKit, EF Core SQLite, Serilog, CommunityToolkit.Mvvm, etc.)
 - Project buildable: Yes (Core + Tests on Linux; Desktop is net8.0-windows, requires EnableWindowsTargeting on Linux)
-- Tests passing: 14/14
+- Tests passing: 85/85
 
 # 5. Coding Conventions
 

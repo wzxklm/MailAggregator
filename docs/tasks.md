@@ -51,6 +51,7 @@ dotnet new xunit -n MailAggregator.Tests -o src/MailAggregator.Tests
 手动创建 Desktop 项目（WPF 模板在 Linux 不可用）：
 
 1. 创建 `src/MailAggregator.Desktop/MailAggregator.Desktop.csproj`：
+
 ```xml
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
@@ -84,6 +85,7 @@ dotnet add src/MailAggregator.Tests reference src/MailAggregator.Core
 > 注意：net8.0 项目必须使用 8.x 版本的 Microsoft 包（EF Core、DI 等），最新版 (10.x) 仅支持 net10.0。
 
 Core 项目：
+
 ```bash
 cd src/MailAggregator.Core
 dotnet add package MailKit
@@ -96,6 +98,7 @@ dotnet add package System.Security.Cryptography.ProtectedData
 ```
 
 Desktop 项目：
+
 > 注意：`Serilog.Extensions.Logging` 10.x 依赖 `Microsoft.Extensions.DependencyInjection` 10.x，与 DI 8.x 产生版本降级冲突。需将两者都限制在 8.x。
 
 ```bash
@@ -107,6 +110,7 @@ dotnet add package Serilog.Extensions.Logging --version "8.*"
 ```
 
 Tests 项目：
+
 ```bash
 cd src/MailAggregator.Tests
 dotnet add package Moq
@@ -410,17 +414,20 @@ git commit  # 提交信息：配置 GitHub Actions CI/CD 工作流
 
 ```markdown
 # 3. Development Progress（开发进度）
+
 - 当前阶段：阶段 X
 - 已完成：阶段 0 ~ X-1 的简要说明
 - 进行中：当前任务描述
 
 # 4. Environment Status（环境状态）
+
 - .NET SDK：8.x 已安装
 - NuGet 包：已配置
 - 项目可编译：是/否
 - 测试通过：X/Y
 
 # 5. Coding Conventions（编码规范）
+
 - 在开发过程中发现的项目特定规则，逐步积累
 ```
 
@@ -434,7 +441,7 @@ git commit  # 提交信息：配置 GitHub Actions CI/CD 工作流
 ### 质量保障流程
 
 1. 每个任务完成后 → 执行 `/simplify` 进行代码质量检查和简化
-2. 每次 git commit 后 → 执行安全审查
+2. 每次 git commit 后 → 执行 `/security-review` 进行安全审查
 3. 每个阶段完成后 → `dotnet build` + `dotnet test` 全量验证
 
 ### 开发环境限制
