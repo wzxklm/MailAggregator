@@ -142,6 +142,9 @@ public class OAuthService : IOAuthService
             ["code_verifier"] = codeVerifier
         };
 
+        if (!string.IsNullOrEmpty(provider.ClientSecret))
+            requestBody["client_secret"] = provider.ClientSecret;
+
         return await PostTokenRequestAsync(provider, requestBody, "Token exchange", cancellationToken);
     }
 
@@ -161,6 +164,9 @@ public class OAuthService : IOAuthService
             ["refresh_token"] = refreshToken,
             ["client_id"] = provider.ClientId
         };
+
+        if (!string.IsNullOrEmpty(provider.ClientSecret))
+            requestBody["client_secret"] = provider.ClientSecret;
 
         return await PostTokenRequestAsync(provider, requestBody, "Token refresh", cancellationToken);
     }

@@ -16,6 +16,8 @@ services:
     environment:
       - NODE_OPTIONS=--max-old-space-size=4096
       - CLAUDE_CONFIG_DIR=/root/.claude
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command: sleep infinity
     deploy:
       resources:

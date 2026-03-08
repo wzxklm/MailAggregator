@@ -3,6 +3,7 @@
     "name": "Gmail",
     "serverHosts": ["imap.gmail.com", "smtp.gmail.com"],
     "clientId": "",
+    "clientSecret": "",
     "authorizationEndpoint": "https://accounts.google.com/o/oauth2/v2/auth",
     "tokenEndpoint": "https://oauth2.googleapis.com/token",
     "scopes": ["https://mail.google.com/"]
