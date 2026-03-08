@@ -15,16 +15,16 @@ public class EmailSyncService : IEmailSyncService
 {
     private const int InitialSyncDays = 30;
 
-    private readonly IImapConnectionService _imapConnection;
+    private readonly IImapConnectionPool _connectionPool;
     private readonly MailAggregatorDbContext _dbContext;
     private readonly ILogger _logger;
 
     public EmailSyncService(
-        IImapConnectionService imapConnection,
+        IImapConnectionPool connectionPool,
         MailAggregatorDbContext dbContext,
         ILogger logger)
     {
-        _imapConnection = imapConnection ?? throw new ArgumentNullException(nameof(imapConnection));
+        _connectionPool = connectionPool ?? throw new ArgumentNullException(nameof(connectionPool));
         _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
@@ -32,10 +32,8 @@ public class EmailSyncService : IEmailSyncService
     public async Task<IReadOnlyList<LocalMailFolder>> SyncFoldersAsync(Account account, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(account);
-        using var client = await _imapConnection.ConnectAsync(account, cancellationToken);
-        var result = await SyncFoldersCoreAsync(account, client, cancellationToken);
-        await client.DisconnectAsync(true, cancellationToken);
-        return result;
+        using var pooled = await _connectionPool.GetConnectionAsync(account, cancellationToken);
+        return await SyncFoldersCoreAsync(account, pooled.Client, cancellationToken);
     }
 
     public async Task<IReadOnlyList<LocalMailFolder>> SyncFoldersAsync(Account account, ImapClient client, CancellationToken cancellationToken = default)
@@ -101,7 +99,8 @@ public class EmailSyncService : IEmailSyncService
         ArgumentNullException.ThrowIfNull(account);
         ArgumentNullException.ThrowIfNull(folder);
 
-        using var client = await _imapConnection.ConnectAsync(account, cancellationToken);
+        using var pooled = await _connectionPool.GetConnectionAsync(account, cancellationToken);
+        var client = pooled.Client;
         var imapFolder = await client.GetFolderAsync(folder.FullName, cancellationToken);
         await imapFolder.OpenAsync(FolderAccess.ReadOnly, cancellationToken);
 
@@ -129,17 +128,14 @@ public class EmailSyncService : IEmailSyncService
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         await imapFolder.CloseAsync(false, cancellationToken);
-        await client.DisconnectAsync(true, cancellationToken);
     }
 
     public async Task SyncIncrementalAsync(Account account, LocalMailFolder folder, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(account);
         ArgumentNullException.ThrowIfNull(folder);
-        using var client = await _imapConnection.ConnectAsync(account, cancellationToken);
-        await SyncIncrementalCoreAsync(account, folder, client, cancellationToken);
-        if (client.IsConnected)
-            await client.DisconnectAsync(true, cancellationToken);
+        using var pooled = await _connectionPool.GetConnectionAsync(account, cancellationToken);
+        await SyncIncrementalCoreAsync(account, folder, pooled.Client, cancellationToken);
     }
 
     public async Task SyncIncrementalAsync(Account account, LocalMailFolder folder, ImapClient client, CancellationToken cancellationToken = default)
@@ -152,7 +148,18 @@ public class EmailSyncService : IEmailSyncService
     private async Task SyncIncrementalCoreAsync(Account account, LocalMailFolder folder, ImapClient client, CancellationToken cancellationToken)
     {
         var imapFolder = await client.GetFolderAsync(folder.FullName, cancellationToken);
-        await imapFolder.OpenAsync(FolderAccess.ReadOnly, cancellationToken);
+        try
+        {
+            await imapFolder.OpenAsync(FolderAccess.ReadOnly, cancellationToken);
+        }
+        catch (ImapCommandException ex) when (ex.Response == ImapCommandResponse.No)
+        {
+            _logger.Warning("Folder {Folder} is not selectable for {Email}, removing from local cache",
+                folder.FullName, account.EmailAddress);
+            _dbContext.Folders.Remove(folder);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            return;
+        }
 
         // Check UIDVALIDITY - if changed, reset folder cache
         if (imapFolder.UidValidity != folder.UidValidity)
@@ -209,7 +216,8 @@ public class EmailSyncService : IEmailSyncService
         var folder = await _dbContext.Folders.FindAsync(new object[] { message.FolderId }, cancellationToken)
             ?? throw new InvalidOperationException($"Folder {message.FolderId} not found.");
 
-        using var client = await _imapConnection.ConnectAsync(account, cancellationToken);
+        using var pooled = await _connectionPool.GetConnectionAsync(account, cancellationToken);
+        var client = pooled.Client;
         var imapFolder = await client.GetFolderAsync(folder.FullName, cancellationToken);
         await imapFolder.OpenAsync(FolderAccess.ReadWrite, cancellationToken);
 
@@ -220,14 +228,22 @@ public class EmailSyncService : IEmailSyncService
             await imapFolder.RemoveFlagsAsync(uid, MessageFlags.Seen, true, cancellationToken);
 
         message.IsRead = isRead;
-        var entry = _dbContext.Entry(message);
-        if (entry.State == Microsoft.EntityFrameworkCore.EntityState.Detached)
+        var tracked = _dbContext.ChangeTracker.Entries<EmailMessage>()
+            .FirstOrDefault(e => e.Entity.Id == message.Id);
+
+        if (tracked != null)
+        {
+            tracked.Entity.IsRead = isRead;
+            tracked.Property(m => m.IsRead).IsModified = true;
+        }
+        else
+        {
             _dbContext.Messages.Attach(message);
-        entry.Property(m => m.IsRead).IsModified = true;
+            _dbContext.Entry(message).Property(m => m.IsRead).IsModified = true;
+        }
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         await imapFolder.CloseAsync(false, cancellationToken);
-        await client.DisconnectAsync(true, cancellationToken);
 
         _logger.Information("Set message UID {Uid} in {Folder} as {ReadStatus} for {Email}",
             message.Uid, folder.FullName, isRead ? "read" : "unread", account.EmailAddress);
@@ -243,8 +259,8 @@ public class EmailSyncService : IEmailSyncService
         var folder = await _dbContext.Folders.FindAsync(new object[] { message.FolderId }, cancellationToken)
             ?? throw new InvalidOperationException($"Folder {message.FolderId} not found.");
 
-        using var client = await _imapConnection.ConnectAsync(account, cancellationToken);
-        var imapFolder = await client.GetFolderAsync(folder.FullName, cancellationToken);
+        using var pooled = await _connectionPool.GetConnectionAsync(account, cancellationToken);
+        var imapFolder = await pooled.Client.GetFolderAsync(folder.FullName, cancellationToken);
         await imapFolder.OpenAsync(FolderAccess.ReadOnly, cancellationToken);
 
         var uid = new UniqueId(message.Uid);
@@ -269,7 +285,6 @@ public class EmailSyncService : IEmailSyncService
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         await imapFolder.CloseAsync(false, cancellationToken);
-        await client.DisconnectAsync(true, cancellationToken);
 
         _logger.Information("Downloaded attachment '{FileName}' for message UID {Uid} in {Email}",
             attachment.FileName, message.Uid, account.EmailAddress);
@@ -284,7 +299,8 @@ public class EmailSyncService : IEmailSyncService
         var sourceFolder = await _dbContext.Folders.FindAsync(new object[] { message.FolderId }, cancellationToken)
             ?? throw new InvalidOperationException($"Source folder {message.FolderId} not found.");
 
-        using var client = await _imapConnection.ConnectAsync(account, cancellationToken);
+        using var pooled = await _connectionPool.GetConnectionAsync(account, cancellationToken);
+        var client = pooled.Client;
         var imapSourceFolder = await client.GetFolderAsync(sourceFolder.FullName, cancellationToken);
         var imapDestFolder = await client.GetFolderAsync(destinationFolder.FullName, cancellationToken);
 
@@ -302,7 +318,6 @@ public class EmailSyncService : IEmailSyncService
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         await imapSourceFolder.CloseAsync(false, cancellationToken);
-        await client.DisconnectAsync(true, cancellationToken);
 
         _logger.Information("Moved message UID {Uid} from {Source} to {Dest} for {Email}",
             message.Uid, sourceFolder.FullName, destinationFolder.FullName, account.EmailAddress);
@@ -320,8 +335,8 @@ public class EmailSyncService : IEmailSyncService
         // If already in Trash, just mark as deleted and expunge
         if (message.FolderId == trashFolder.Id)
         {
-            using var client = await _imapConnection.ConnectAsync(account, cancellationToken);
-            var imapFolder = await client.GetFolderAsync(trashFolder.FullName, cancellationToken);
+            using var pooled = await _connectionPool.GetConnectionAsync(account, cancellationToken);
+            var imapFolder = await pooled.Client.GetFolderAsync(trashFolder.FullName, cancellationToken);
             await imapFolder.OpenAsync(FolderAccess.ReadWrite, cancellationToken);
 
             var uid = new UniqueId(message.Uid);
@@ -332,7 +347,6 @@ public class EmailSyncService : IEmailSyncService
             await _dbContext.SaveChangesAsync(cancellationToken);
 
             await imapFolder.CloseAsync(false, cancellationToken);
-            await client.DisconnectAsync(true, cancellationToken);
 
             _logger.Information("Permanently deleted message UID {Uid} from Trash for {Email}",
                 message.Uid, account.EmailAddress);

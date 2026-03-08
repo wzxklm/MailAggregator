@@ -20,6 +20,7 @@
     "name": "Yahoo",
     "serverHosts": ["imap.mail.yahoo.com", "smtp.mail.yahoo.com"],
     "clientId": "",
+    "clientSecret": "",
     "authorizationEndpoint": "https://api.login.yahoo.com/oauth2/request_auth",
     "tokenEndpoint": "https://api.login.yahoo.com/oauth2/get_token",
     "scopes": ["mail-w"]
@@ -28,6 +29,7 @@
     "name": "AOL",
     "serverHosts": ["imap.aol.com", "smtp.aol.com"],
     "clientId": "",
+    "clientSecret": "",
     "authorizationEndpoint": "https://api.login.aol.com/oauth2/request_auth",
     "tokenEndpoint": "https://api.login.aol.com/oauth2/get_token",
     "scopes": ["mail-w"]

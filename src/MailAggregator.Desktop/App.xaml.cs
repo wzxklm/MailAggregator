@@ -93,6 +93,7 @@ public partial class App : System.Windows.Application
 
         // Connection services
         services.AddSingleton<IImapConnectionService, ImapConnectionService>();
+        services.AddSingleton<IImapConnectionPool, ImapConnectionPool>();
         services.AddSingleton<ISmtpConnectionService, SmtpConnectionService>();
 
         // Mail services
@@ -124,6 +125,9 @@ public partial class App : System.Windows.Application
             {
                 await syncManager.StopAllAsync();
             }
+
+            var connectionPool = _serviceProvider.GetService<IImapConnectionPool>();
+            connectionPool?.Dispose();
 
             _serviceProvider.Dispose();
         }
