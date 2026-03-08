@@ -58,6 +58,10 @@ public class EmailSyncService : IEmailSyncService
 
         foreach (var imapFolder in imapFolders)
         {
+            // Skip non-selectable container folders (e.g. QQ Mail's "其他文件夹")
+            if (imapFolder.Attributes.HasFlag(FolderAttributes.NoSelect))
+                continue;
+
             serverFolderNames.Add(imapFolder.FullName);
 
             if (localFolderMap.TryGetValue(imapFolder.FullName, out var existing))
@@ -216,7 +220,10 @@ public class EmailSyncService : IEmailSyncService
             await imapFolder.RemoveFlagsAsync(uid, MessageFlags.Seen, true, cancellationToken);
 
         message.IsRead = isRead;
-        _dbContext.Messages.Update(message);
+        var entry = _dbContext.Entry(message);
+        if (entry.State == Microsoft.EntityFrameworkCore.EntityState.Detached)
+            _dbContext.Messages.Attach(message);
+        entry.Property(m => m.IsRead).IsModified = true;
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         await imapFolder.CloseAsync(false, cancellationToken);
