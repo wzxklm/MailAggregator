@@ -1,10 +1,23 @@
 using MailAggregator.Core.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 namespace MailAggregator.Core.Data;
 
 public class MailAggregatorDbContext : DbContext
 {
+    /// <summary>
+    /// Converts DateTimeOffset to UTC ticks (long) for SQLite compatibility.
+    /// SQLite doesn't support DateTimeOffset in ORDER BY clauses natively.
+    /// </summary>
+    private class DateTimeOffsetToLongConverter : ValueConverter<DateTimeOffset, long>
+    {
+        public DateTimeOffsetToLongConverter() : base(
+            v => v.UtcTicks,
+            v => new DateTimeOffset(v, TimeSpan.Zero))
+        { }
+    }
+
     public DbSet<Account> Accounts => Set<Account>();
     public DbSet<MailFolder> Folders => Set<MailFolder>();
     public DbSet<EmailMessage> Messages => Set<EmailMessage>();
@@ -50,6 +63,14 @@ public class MailAggregatorDbContext : DbContext
                 entry.Entity.CachedAt = now;
             }
         }
+    }
+
+    protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
+    {
+        // SQLite doesn't support DateTimeOffset in ORDER BY or WHERE clauses.
+        // Store all DateTimeOffset values as UTC ticks (long) for correct sorting.
+        configurationBuilder.Properties<DateTimeOffset>()
+            .HaveConversion<DateTimeOffsetToLongConverter>();
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
