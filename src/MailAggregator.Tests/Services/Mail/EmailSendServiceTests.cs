@@ -170,10 +170,15 @@ public class EmailSendServiceTests
 
             var attachmentPart = (MimePart)multipart[1];
             attachmentPart.FileName.Should().Be(Path.GetFileName(tempFile));
+
+            // Dispose to release file handles before cleanup (MimePart holds a stream on Windows)
+            if (result is IDisposable disposable)
+                disposable.Dispose();
         }
         finally
         {
-            File.Delete(tempFile);
+            if (File.Exists(tempFile))
+                File.Delete(tempFile);
         }
     }
 
