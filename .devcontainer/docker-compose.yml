@@ -1,0 +1,27 @@
+services:
+  author01:
+    image: author_image:latest
+    container_name: author_container
+    init: true
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        TZ: ${TZ:-America/Los_Angeles}
+        GIT_DELTA_VERSION: 0.18.2
+    volumes:
+      - ..:/workspace:delegated
+      - /data/wzx/docker_volumes/command_history:/commandhistory
+      - /data/wzx/docker_volumes/claude_config:/root/.claude
+    environment:
+      - NODE_OPTIONS=--max-old-space-size=4096
+      - CLAUDE_CONFIG_DIR=/root/.claude
+    command: sleep infinity
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
