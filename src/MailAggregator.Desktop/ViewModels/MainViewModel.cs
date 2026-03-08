@@ -228,7 +228,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         var dbContext = scope.ServiceProvider.GetRequiredService<Core.Data.MailAggregatorDbContext>();
 
         IQueryable<EmailMessage> query = dbContext.Messages
-            .OrderByDescending(m => m.DateSent.Ticks);
+            .OrderByDescending(m => m.DateSent);
 
         if (SelectedFolder?.Folder != null)
         {

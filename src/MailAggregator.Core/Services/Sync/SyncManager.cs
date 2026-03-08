@@ -184,8 +184,8 @@ public class SyncManager : ISyncManager
                     account.Id, account.EmailAddress);
                 client = await _imapConnectionService.ConnectAsync(account, cancellationToken);
 
-                // Step 2: Sync folders and find Inbox
-                var folders = await _emailSyncService.SyncFoldersAsync(account, cancellationToken);
+                // Step 2: Sync folders using the IDLE client (avoids extra connection)
+                var folders = await _emailSyncService.SyncFoldersAsync(account, client, cancellationToken);
                 var inbox = folders.FirstOrDefault(f => f.SpecialUse == SpecialFolderType.Inbox);
 
                 if (inbox == null)
@@ -195,12 +195,12 @@ public class SyncManager : ISyncManager
                     return;
                 }
 
-                // Step 3: Initial incremental sync on Inbox
+                // Step 3: Initial incremental sync using the IDLE client (avoids extra connection)
                 _logger.Information("Running incremental sync on Inbox for account {AccountId} ({Email})",
                     account.Id, account.EmailAddress);
-                await _emailSyncService.SyncIncrementalAsync(account, inbox, cancellationToken);
+                await _emailSyncService.SyncIncrementalAsync(account, inbox, client, cancellationToken);
 
-                // Step 4: Open Inbox for IDLE
+                // Step 4: Open Inbox for IDLE (client is still connected, folder was closed by step 3)
                 var imapInbox = await client.GetFolderAsync(inbox.FullName, cancellationToken);
                 await imapInbox.OpenAsync(FolderAccess.ReadOnly, cancellationToken);
 
@@ -241,14 +241,17 @@ public class SyncManager : ISyncManager
                         _logger.Information("IDLE detected {NewCount} new message(s) for account {AccountId} ({Email})",
                             newCount, account.Id, account.EmailAddress);
 
-                        // Run incremental sync
-                        await _emailSyncService.SyncIncrementalAsync(account, inbox, cancellationToken);
+                        // Run incremental sync using the IDLE client (avoids extra connection)
+                        await _emailSyncService.SyncIncrementalAsync(account, inbox, client, cancellationToken);
 
                         // Raise event
                         OnNewEmailsReceived(new NewEmailsEventArgs(account.Id, account.EmailAddress, newCount));
+
+                        // Reopen inbox for next IDLE iteration (SyncIncrementalAsync closed the folder)
+                        await imapInbox.OpenAsync(FolderAccess.ReadOnly, cancellationToken);
                     }
 
-                    previousCount = currentCount;
+                    previousCount = imapInbox.Count;
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

@@ -90,8 +90,8 @@ public class SyncManagerTests : IDisposable
             .ReturnsAsync(new ImapClient());
 
         _mockEmailSyncService
-            .Setup(s => s.SyncFoldersAsync(It.IsAny<LocalAccount>(), It.IsAny<CancellationToken>()))
-            .Returns<LocalAccount, CancellationToken>(async (_, ct) =>
+            .Setup(s => s.SyncFoldersAsync(It.IsAny<LocalAccount>(), It.IsAny<ImapClient>(), It.IsAny<CancellationToken>()))
+            .Returns<LocalAccount, ImapClient, CancellationToken>(async (_, _, ct) =>
             {
                 await Task.Delay(Timeout.Infinite, ct);
                 throw new OperationCanceledException(ct);
@@ -312,11 +312,11 @@ public class SyncManagerTests : IDisposable
             });
 
         _mockEmailSyncService
-            .Setup(s => s.SyncFoldersAsync(It.IsAny<LocalAccount>(), It.IsAny<CancellationToken>()))
+            .Setup(s => s.SyncFoldersAsync(It.IsAny<LocalAccount>(), It.IsAny<ImapClient>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<LocalMailFolder> { inbox });
 
         _mockEmailSyncService
-            .Setup(s => s.SyncIncrementalAsync(It.IsAny<LocalAccount>(), It.IsAny<LocalMailFolder>(), It.IsAny<CancellationToken>()))
+            .Setup(s => s.SyncIncrementalAsync(It.IsAny<LocalAccount>(), It.IsAny<LocalMailFolder>(), It.IsAny<ImapClient>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         // The sync loop will fail trying to use the ImapClient for IDLE (since it's not connected),
@@ -334,14 +334,14 @@ public class SyncManagerTests : IDisposable
         // Wait briefly; the sync will try to connect, sync folders, sync incremental, then fail on IDLE
         await Task.Delay(200);
 
-        // Verify that SyncFoldersAsync was called at least once
+        // Verify that SyncFoldersAsync (with client) was called at least once
         _mockEmailSyncService.Verify(
-            s => s.SyncFoldersAsync(It.IsAny<LocalAccount>(), It.IsAny<CancellationToken>()),
+            s => s.SyncFoldersAsync(It.IsAny<LocalAccount>(), It.IsAny<ImapClient>(), It.IsAny<CancellationToken>()),
             Times.AtLeastOnce);
 
-        // Verify that SyncIncrementalAsync was called at least once
+        // Verify that SyncIncrementalAsync (with client) was called at least once
         _mockEmailSyncService.Verify(
-            s => s.SyncIncrementalAsync(It.IsAny<LocalAccount>(), It.Is<LocalMailFolder>(f => f.SpecialUse == SpecialFolderType.Inbox), It.IsAny<CancellationToken>()),
+            s => s.SyncIncrementalAsync(It.IsAny<LocalAccount>(), It.Is<LocalMailFolder>(f => f.SpecialUse == SpecialFolderType.Inbox), It.IsAny<ImapClient>(), It.IsAny<CancellationToken>()),
             Times.AtLeastOnce);
 
         await _syncManager.StopAllAsync();
@@ -358,7 +358,7 @@ public class SyncManagerTests : IDisposable
 
         // Return folders without an Inbox
         _mockEmailSyncService
-            .Setup(s => s.SyncFoldersAsync(It.IsAny<LocalAccount>(), It.IsAny<CancellationToken>()))
+            .Setup(s => s.SyncFoldersAsync(It.IsAny<LocalAccount>(), It.IsAny<ImapClient>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<LocalMailFolder>
             {
                 new() { Id = 2, AccountId = 1, Name = "Sent", FullName = "Sent", SpecialUse = SpecialFolderType.Sent }

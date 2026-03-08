@@ -1,4 +1,5 @@
 using MailAggregator.Core.Models;
+using MailKit.Net.Imap;
 
 namespace MailAggregator.Core.Services.Mail;
 
@@ -6,9 +7,15 @@ public interface IEmailSyncService
 {
     /// <summary>
     /// Fetches the IMAP folder list for the account, recognizing SPECIAL-USE attributes.
-    /// Syncs folder metadata to local database.
+    /// Syncs folder metadata to local database. Creates and disposes its own IMAP connection.
     /// </summary>
     Task<IReadOnlyList<MailFolder>> SyncFoldersAsync(Account account, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Fetches the IMAP folder list using a caller-provided IMAP client.
+    /// The caller is responsible for connecting and disconnecting the client.
+    /// </summary>
+    Task<IReadOnlyList<MailFolder>> SyncFoldersAsync(Account account, ImapClient client, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Performs initial sync: pulls envelope info and body for emails from the last 30 days.
@@ -17,10 +24,15 @@ public interface IEmailSyncService
 
     /// <summary>
     /// Performs incremental sync based on UIDVALIDITY + max UID.
-    /// Resets folder cache if UIDVALIDITY has changed.
-    /// Detects deleted emails by comparing local vs server UID sets.
+    /// Creates and disposes its own IMAP connection.
     /// </summary>
     Task SyncIncrementalAsync(Account account, MailFolder folder, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Performs incremental sync using a caller-provided IMAP client.
+    /// The caller is responsible for connecting and disconnecting the client.
+    /// </summary>
+    Task SyncIncrementalAsync(Account account, MailFolder folder, ImapClient client, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Sets or clears the \Seen flag on a message on the IMAP server and updates local cache.

@@ -32,9 +32,20 @@ public class EmailSyncService : IEmailSyncService
     public async Task<IReadOnlyList<LocalMailFolder>> SyncFoldersAsync(Account account, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(account);
-
         using var client = await _imapConnection.ConnectAsync(account, cancellationToken);
+        var result = await SyncFoldersCoreAsync(account, client, cancellationToken);
+        await client.DisconnectAsync(true, cancellationToken);
+        return result;
+    }
 
+    public async Task<IReadOnlyList<LocalMailFolder>> SyncFoldersAsync(Account account, ImapClient client, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(account);
+        return await SyncFoldersCoreAsync(account, client, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<LocalMailFolder>> SyncFoldersCoreAsync(Account account, ImapClient client, CancellationToken cancellationToken)
+    {
         var personalNamespace = client.PersonalNamespaces[0];
         var imapFolders = await client.GetFoldersAsync(personalNamespace, cancellationToken: cancellationToken);
 
@@ -72,7 +83,6 @@ public class EmailSyncService : IEmailSyncService
         _dbContext.Folders.RemoveRange(removedFolders);
 
         await _dbContext.SaveChangesAsync(cancellationToken);
-        await client.DisconnectAsync(true, cancellationToken);
 
         _logger.Information("Synced {Count} folders for {Email}", serverFolderNames.Count, account.EmailAddress);
 
@@ -122,8 +132,21 @@ public class EmailSyncService : IEmailSyncService
     {
         ArgumentNullException.ThrowIfNull(account);
         ArgumentNullException.ThrowIfNull(folder);
-
         using var client = await _imapConnection.ConnectAsync(account, cancellationToken);
+        await SyncIncrementalCoreAsync(account, folder, client, cancellationToken);
+        if (client.IsConnected)
+            await client.DisconnectAsync(true, cancellationToken);
+    }
+
+    public async Task SyncIncrementalAsync(Account account, LocalMailFolder folder, ImapClient client, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(account);
+        ArgumentNullException.ThrowIfNull(folder);
+        await SyncIncrementalCoreAsync(account, folder, client, cancellationToken);
+    }
+
+    private async Task SyncIncrementalCoreAsync(Account account, LocalMailFolder folder, ImapClient client, CancellationToken cancellationToken)
+    {
         var imapFolder = await client.GetFolderAsync(folder.FullName, cancellationToken);
         await imapFolder.OpenAsync(FolderAccess.ReadOnly, cancellationToken);
 
@@ -140,9 +163,8 @@ public class EmailSyncService : IEmailSyncService
             folder.UidValidity = imapFolder.UidValidity;
             folder.MaxUid = 0;
 
-            // Perform initial sync instead
+            // Perform initial sync instead (creates its own connection)
             await imapFolder.CloseAsync(false, cancellationToken);
-            await client.DisconnectAsync(true, cancellationToken);
             await SyncInitialAsync(account, folder, cancellationToken);
             return;
         }
@@ -173,7 +195,6 @@ public class EmailSyncService : IEmailSyncService
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         await imapFolder.CloseAsync(false, cancellationToken);
-        await client.DisconnectAsync(true, cancellationToken);
     }
 
     public async Task SetMessageReadAsync(Account account, EmailMessage message, bool isRead, CancellationToken cancellationToken = default)
