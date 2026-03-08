@@ -1,0 +1,55 @@
+name: Build, Test & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    env:
+      ARTIFACT_NAME: MailAggregator-${{ github.ref_name }}-win-x64.zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+
+      - name: Restore dependencies
+        run: dotnet restore MailAggregator.sln
+
+      - name: Build tests
+        run: dotnet build src/MailAggregator.Tests/MailAggregator.Tests.csproj --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test src/MailAggregator.Tests/MailAggregator.Tests.csproj --configuration Release --no-build --verbosity normal
+
+      - name: Publish (win-x64, self-contained)
+        run: >
+          dotnet publish src/MailAggregator.Desktop/MailAggregator.Desktop.csproj
+          --configuration Release
+          --runtime win-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          --output ./publish
+
+      - name: Archive release
+        run: Compress-Archive -Path ./publish/* -DestinationPath ${{ env.ARTIFACT_NAME }}
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ARTIFACT_NAME }}
+          generate_release_notes: true
