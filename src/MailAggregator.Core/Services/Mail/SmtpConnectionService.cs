@@ -8,13 +8,16 @@ namespace MailAggregator.Core.Services.Mail;
 public class SmtpConnectionService : ISmtpConnectionService
 {
     private readonly ICredentialEncryptionService _encryption;
+    private readonly IOAuthService _oAuthService;
     private readonly ILogger _logger;
 
     public SmtpConnectionService(
         ICredentialEncryptionService encryption,
+        IOAuthService oAuthService,
         ILogger logger)
     {
         _encryption = encryption ?? throw new ArgumentNullException(nameof(encryption));
+        _oAuthService = oAuthService ?? throw new ArgumentNullException(nameof(oAuthService));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -44,7 +47,7 @@ public class SmtpConnectionService : ISmtpConnectionService
                     account.SmtpHost, account.SmtpPort, account.SmtpEncryption, account.EmailAddress);
 
                 await client.ConnectAsync(account.SmtpHost, account.SmtpPort, secureSocketOptions, cancellationToken);
-                await MailConnectionHelper.AuthenticateAsync(client, account, _encryption, cancellationToken);
+                await MailConnectionHelper.AuthenticateAsync(client, account, _encryption, cancellationToken, _oAuthService);
 
                 _logger.Information("SMTP connected and authenticated for {Email}", account.EmailAddress);
                 return client;

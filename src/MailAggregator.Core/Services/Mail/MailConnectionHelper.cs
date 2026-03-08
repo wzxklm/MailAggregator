@@ -34,12 +34,30 @@ internal static class MailConnectionHelper
         MailService client,
         Account account,
         ICredentialEncryptionService encryption,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IOAuthService? oAuthService = null)
     {
         if (account.AuthType == AuthType.OAuth2)
         {
             if (string.IsNullOrEmpty(account.EncryptedAccessToken))
                 throw new InvalidOperationException("OAuth2 account is missing access token.");
+
+            // Refresh token if expired
+            if (oAuthService != null
+                && account.OAuthTokenExpiry.HasValue
+                && account.OAuthTokenExpiry.Value <= DateTimeOffset.UtcNow
+                && !string.IsNullOrEmpty(account.EncryptedRefreshToken))
+            {
+                var provider = oAuthService.FindProviderByHost(account.ImapHost);
+                if (provider != null)
+                {
+                    var refreshed = await oAuthService.RefreshTokenAsync(provider, account.EncryptedRefreshToken, cancellationToken);
+                    account.EncryptedAccessToken = refreshed.AccessToken;
+                    if (refreshed.RefreshToken != null)
+                        account.EncryptedRefreshToken = refreshed.RefreshToken;
+                    account.OAuthTokenExpiry = refreshed.ExpiresAt;
+                }
+            }
 
             var accessToken = encryption.Decrypt(account.EncryptedAccessToken);
             var oauth2 = new SaslMechanismOAuth2(account.EmailAddress, accessToken);

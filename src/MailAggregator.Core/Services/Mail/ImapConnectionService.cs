@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using MailAggregator.Core.Models;
 using MailAggregator.Core.Services.Auth;
 using MailKit.Net.Imap;
@@ -8,17 +7,17 @@ namespace MailAggregator.Core.Services.Mail;
 
 public class ImapConnectionService : IImapConnectionService
 {
-    private static readonly TimeSpan InterConnectionDelay = TimeSpan.FromMilliseconds(500);
-
-    private readonly ConcurrentDictionary<int, SemaphoreSlim> _accountSemaphores = new();
     private readonly ICredentialEncryptionService _encryption;
+    private readonly IOAuthService _oAuthService;
     private readonly ILogger _logger;
 
     public ImapConnectionService(
         ICredentialEncryptionService encryption,
+        IOAuthService oAuthService,
         ILogger logger)
     {
         _encryption = encryption ?? throw new ArgumentNullException(nameof(encryption));
+        _oAuthService = oAuthService ?? throw new ArgumentNullException(nameof(oAuthService));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -26,23 +25,6 @@ public class ImapConnectionService : IImapConnectionService
     {
         ArgumentNullException.ThrowIfNull(account);
 
-        var semaphore = _accountSemaphores.GetOrAdd(account.Id, _ => new SemaphoreSlim(1, 1));
-        await semaphore.WaitAsync(cancellationToken);
-
-        try
-        {
-            return await ConnectCoreAsync(account, cancellationToken);
-        }
-        finally
-        {
-            // Brief delay to space out successive connections for the same account
-            try { await Task.Delay(InterConnectionDelay); } catch (ObjectDisposedException) { }
-            semaphore.Release();
-        }
-    }
-
-    private async Task<ImapClient> ConnectCoreAsync(Account account, CancellationToken cancellationToken)
-    {
         Exception? lastException = null;
 
         for (int attempt = 0; attempt < MailConnectionHelper.MaxRetries; attempt++)
@@ -65,7 +47,7 @@ public class ImapConnectionService : IImapConnectionService
                     account.ImapHost, account.ImapPort, account.ImapEncryption, account.EmailAddress);
 
                 await client.ConnectAsync(account.ImapHost, account.ImapPort, secureSocketOptions, cancellationToken);
-                await MailConnectionHelper.AuthenticateAsync(client, account, _encryption, cancellationToken);
+                await MailConnectionHelper.AuthenticateAsync(client, account, _encryption, cancellationToken, _oAuthService);
 
                 _logger.Information("IMAP connected and authenticated for {Email}", account.EmailAddress);
                 return client;

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MailAggregator.Core.Models;
@@ -39,7 +40,17 @@ public partial class AddAccountViewModel : ObservableObject
     private string _password = string.Empty;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsPasswordSelected))]
     private bool _isOAuthAvailable;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsPasswordSelected))]
+    private bool _isOAuthSelected;
+
+    public bool IsPasswordSelected => !IsOAuthSelected;
+
+    [ObservableProperty]
+    private string _oAuthStatus = string.Empty;
 
     // Step 3: Server config
     [ObservableProperty]
@@ -144,6 +155,7 @@ public partial class AddAccountViewModel : ObservableObject
 
                 // Check if OAuth is available
                 IsOAuthAvailable = _oAuthService.FindProviderByHost(config.ImapHost) != null;
+                IsOAuthSelected = IsOAuthAvailable;
                 SelectedAuthType = IsOAuthAvailable ? AuthType.OAuth2 : AuthType.Password;
 
                 CurrentStep = 2; // Move to auth step
@@ -188,6 +200,9 @@ public partial class AddAccountViewModel : ObservableObject
             IsBusy = true;
             ErrorMessage = string.Empty;
 
+            // Sync radio button selection back to SelectedAuthType
+            SelectedAuthType = IsOAuthSelected ? AuthType.OAuth2 : AuthType.Password;
+
             if (IsEditMode && _editingAccount != null)
             {
                 _editingAccount.ImapHost = ImapHost;
@@ -205,12 +220,29 @@ public partial class AddAccountViewModel : ObservableObject
                 return;
             }
 
-            // New account: use AddAccountAsync
+            // OAuth2: run authorization flow before creating account
+            OAuthTokenResult? oauthTokens = null;
+            if (SelectedAuthType == AuthType.OAuth2)
+            {
+                oauthTokens = await RunOAuthFlowAsync();
+                if (oauthTokens == null)
+                    return; // Flow was cancelled or failed (error already set)
+            }
+
+            // Create account
             var passwordForAuth = SelectedAuthType == AuthType.Password ? Password : null;
             var account = await _accountService.AddAccountAsync(EmailAddress, passwordForAuth);
 
+            // Store OAuth tokens on the account
+            if (oauthTokens != null)
+            {
+                account.EncryptedAccessToken = oauthTokens.AccessToken;
+                account.EncryptedRefreshToken = oauthTokens.RefreshToken;
+                account.OAuthTokenExpiry = oauthTokens.ExpiresAt;
+            }
+
             // Apply proxy if configured
-            if (!string.IsNullOrWhiteSpace(ProxyHost))
+            if (!string.IsNullOrWhiteSpace(ProxyHost) || oauthTokens != null)
             {
                 ApplyProxySettings(account);
                 await _accountService.UpdateAccountAsync(account);
@@ -228,7 +260,50 @@ public partial class AddAccountViewModel : ObservableObject
         finally
         {
             IsBusy = false;
+            OAuthStatus = string.Empty;
         }
+    }
+
+    private async Task<OAuthTokenResult?> RunOAuthFlowAsync()
+    {
+        var provider = _oAuthService.FindProviderByHost(ImapHost);
+        if (provider == null)
+        {
+            ErrorMessage = "No OAuth provider found for this server.";
+            return null;
+        }
+
+        // Step 1: Prepare authorization URL
+        var (authUrl, codeVerifier, listenerPort) = _oAuthService.PrepareAuthorization(provider);
+
+        // Step 2: Open browser for user authorization
+        OAuthStatus = "Opening browser for authorization...";
+        Process.Start(new ProcessStartInfo(authUrl) { UseShellExecute = true });
+
+        // Step 3: Wait for the OAuth callback
+        OAuthStatus = "Waiting for authorization in browser...";
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+        string authCode;
+        try
+        {
+            authCode = await _oAuthService.WaitForAuthorizationCodeAsync(listenerPort, cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            ErrorMessage = "OAuth authorization timed out. Please try again.";
+            return null;
+        }
+
+        // Step 4: Exchange code for tokens
+        OAuthStatus = "Exchanging authorization code for tokens...";
+        var redirectUri = $"http://localhost:{listenerPort}/";
+        var tokens = await _oAuthService.ExchangeCodeForTokenAsync(provider, authCode, codeVerifier, redirectUri);
+
+        OAuthStatus = "Authorization successful!";
+        _logger.Information("OAuth flow completed for {Email}, token expires at {ExpiresAt}",
+            EmailAddress, tokens.ExpiresAt);
+
+        return tokens;
     }
 
     private void ApplyProxySettings(Account account)

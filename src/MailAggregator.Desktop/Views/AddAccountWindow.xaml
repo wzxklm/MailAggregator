@@ -61,12 +61,25 @@
             <TextBlock Text="{Binding DiscoveryStatus}" Foreground="Green" Margin="0,0,0,12" />
 
             <RadioButton Content="OAuth 2.0 (Recommended)" GroupName="Auth"
-                         IsChecked="{Binding IsOAuthAvailable}"
+                         IsChecked="{Binding IsOAuthSelected, Mode=TwoWay}"
                          IsEnabled="{Binding IsOAuthAvailable}" Margin="0,0,0,8" />
-            <RadioButton Content="Password / App Password" GroupName="Auth" Margin="0,0,0,12" />
+            <RadioButton Content="Password / App Password" GroupName="Auth"
+                         IsChecked="{Binding IsPasswordSelected, Mode=OneWay}" Margin="0,0,0,12" />
 
-            <TextBlock Text="Password:" Margin="0,0,0,4" />
-            <PasswordBox x:Name="PasswordBox" Padding="8,6" Margin="0,0,0,16" />
+            <TextBlock Text="Password:" Margin="0,0,0,4"
+                       Visibility="{Binding IsPasswordSelected, Converter={StaticResource BoolToVisibility}}" />
+            <PasswordBox x:Name="PasswordBox" Padding="8,6" Margin="0,0,0,16"
+                         Visibility="{Binding IsPasswordSelected, Converter={StaticResource BoolToVisibility}}" />
+
+            <!-- OAuth status -->
+            <TextBlock Text="{Binding OAuthStatus}" Foreground="DodgerBlue" TextWrapping="Wrap"
+                       Margin="0,0,0,12"
+                       Visibility="{Binding OAuthStatus, Converter={StaticResource NullToVisibility}}" />
+
+            <!-- Error message -->
+            <TextBlock Text="{Binding ErrorMessage}" Foreground="Red" TextWrapping="Wrap"
+                       Margin="0,0,0,12"
+                       Visibility="{Binding ErrorMessage, Converter={StaticResource NullToVisibility}}" />
 
             <StackPanel Orientation="Horizontal">
                 <Button Content="Back" Style="{StaticResource ToolbarButton}"
@@ -76,6 +89,9 @@
                 <Button Content="Connect" Style="{StaticResource PrimaryButton}"
                         Command="{Binding SaveCommand}" />
             </StackPanel>
+
+            <ProgressBar IsIndeterminate="True" Height="4" Margin="0,12,0,0"
+                         Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}" />
         </StackPanel>
 
         <!-- Step 3: Manual server config -->
