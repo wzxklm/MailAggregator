@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using MailAggregator.Core.Models;
 using MailAggregator.Core.Services.Auth;
 using MailKit.Net.Imap;
@@ -7,6 +8,9 @@ namespace MailAggregator.Core.Services.Mail;
 
 public class ImapConnectionService : IImapConnectionService
 {
+    private static readonly TimeSpan InterConnectionDelay = TimeSpan.FromMilliseconds(500);
+
+    private readonly ConcurrentDictionary<int, SemaphoreSlim> _accountSemaphores = new();
     private readonly ICredentialEncryptionService _encryption;
     private readonly ILogger _logger;
 
@@ -22,6 +26,23 @@ public class ImapConnectionService : IImapConnectionService
     {
         ArgumentNullException.ThrowIfNull(account);
 
+        var semaphore = _accountSemaphores.GetOrAdd(account.Id, _ => new SemaphoreSlim(1, 1));
+        await semaphore.WaitAsync(cancellationToken);
+
+        try
+        {
+            return await ConnectCoreAsync(account, cancellationToken);
+        }
+        finally
+        {
+            // Brief delay to space out successive connections for the same account
+            try { await Task.Delay(InterConnectionDelay); } catch (ObjectDisposedException) { }
+            semaphore.Release();
+        }
+    }
+
+    private async Task<ImapClient> ConnectCoreAsync(Account account, CancellationToken cancellationToken)
+    {
         Exception? lastException = null;
 
         for (int attempt = 0; attempt < MailConnectionHelper.MaxRetries; attempt++)

@@ -188,8 +188,16 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 .Where(f => f.Folder?.SpecialUse == SpecialFolderType.Inbox && f.Account != null)
                 .ToList();
 
-            var syncTasks = inboxFolders.Select(f =>
-                _emailSyncService.SyncIncrementalAsync(f.Account!, f.Folder!));
+            // Sync sequentially per account, parallel across accounts
+            var syncTasks = inboxFolders
+                .GroupBy(f => f.Account!.Id)
+                .Select(async group =>
+                {
+                    foreach (var f in group)
+                    {
+                        await _emailSyncService.SyncIncrementalAsync(f.Account!, f.Folder!);
+                    }
+                });
             await Task.WhenAll(syncTasks);
 
             await LoadEmailsForCurrentViewAsync();
@@ -220,7 +228,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         var dbContext = scope.ServiceProvider.GetRequiredService<Core.Data.MailAggregatorDbContext>();
 
         IQueryable<EmailMessage> query = dbContext.Messages
-            .OrderByDescending(m => m.DateSent);
+            .OrderByDescending(m => m.DateSent.Ticks);
 
         if (SelectedFolder?.Folder != null)
         {

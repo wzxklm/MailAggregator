@@ -184,9 +184,6 @@ public class SyncManager : ISyncManager
                     account.Id, account.EmailAddress);
                 client = await _imapConnectionService.ConnectAsync(account, cancellationToken);
 
-                // Connection succeeded; reset backoff
-                reconnectAttempt = 0;
-
                 // Step 2: Sync folders and find Inbox
                 var folders = await _emailSyncService.SyncFoldersAsync(account, cancellationToken);
                 var inbox = folders.FirstOrDefault(f => f.SpecialUse == SpecialFolderType.Inbox);
@@ -208,6 +205,9 @@ public class SyncManager : ISyncManager
                 await imapInbox.OpenAsync(FolderAccess.ReadOnly, cancellationToken);
 
                 var previousCount = imapInbox.Count;
+
+                // IDLE setup succeeded; reset backoff
+                reconnectAttempt = 0;
 
                 // Step 5: IDLE loop
                 while (!cancellationToken.IsCancellationRequested)
@@ -254,6 +254,14 @@ public class SyncManager : ISyncManager
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 _logger.Information("Sync loop cancelled for account {AccountId} ({Email})",
+                    account.Id, account.EmailAddress);
+                break;
+            }
+            catch (ImapCommandException ex) when (ex.Message.Contains("Unsafe Login", StringComparison.OrdinalIgnoreCase)
+                || ex.Message.Contains("Authentication", StringComparison.OrdinalIgnoreCase)
+                || ex.Message.Contains("LOGIN", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.Error(ex, "Non-transient auth/access error for account {AccountId} ({Email}). Stopping sync — check credentials or authorization code",
                     account.Id, account.EmailAddress);
                 break;
             }
