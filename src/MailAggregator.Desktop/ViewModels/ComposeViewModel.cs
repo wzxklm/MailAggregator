@@ -120,7 +120,7 @@ public partial class ComposeViewModel : ObservableObject
     [RelayCommand]
     private void AddAttachment()
     {
-        var dialog = new OpenFileDialog
+        var dialog = new Microsoft.Win32.OpenFileDialog
         {
             Multiselect = true,
             Filter = "All files (*.*)|*.*"
