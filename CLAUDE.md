@@ -10,9 +10,9 @@ Running inside a DevContainer (Ubuntu 22.04, CUDA 12.4). See `.devcontainer/Dock
 
 # 3. Development Progress
 
-- Current phase: Phase 0 (Environment Setup)
-- Completed: Requirements doc, Architecture doc
-- In progress: Pending environment setup
+- Current phase: Phase 1 (Data Foundation)
+- Completed: Phase 0 — .NET 8 SDK installed, solution skeleton created (Core/Desktop/Tests), NuGet dependencies configured, directory structure set up, build + test verified
+- In progress: Pending Phase 1 start
 
 # 4. Environment Status
 
@@ -20,8 +20,10 @@ Running inside a DevContainer (Ubuntu 22.04, CUDA 12.4). See `.devcontainer/Dock
 - Git: 2.34.1
 - Node.js: 22.x
 - Python: 3.x (system)
-- .NET SDK: **Not installed**
-- Project buildable: No (project skeleton not created)
+- .NET SDK: 8.0.418
+- NuGet packages: Configured (MailKit, EF Core SQLite, Serilog, CommunityToolkit.Mvvm, etc.)
+- Project buildable: Yes (Core + Tests on Linux; Desktop is net8.0-windows, requires EnableWindowsTargeting on Linux)
+- Tests passing: 1/1
 
 # 5. Coding Conventions
 
@@ -37,5 +39,5 @@ Running inside a DevContainer (Ubuntu 22.04, CUDA 12.4). See `.devcontainer/Dock
 - Follow the phase order defined in docs/tasks.md
 - Phases marked [parallel] can use subagents for concurrent development; [sequential] phases must run in order
 - Run `/simplify` after completing each task for code quality review
-- Run security review after each git commit
+- Run `/security-review` after each git commit
 - Update "Development Progress" and "Environment Status" sections in this file after each phase
