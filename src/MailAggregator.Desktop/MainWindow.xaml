@@ -194,6 +194,23 @@
                                 </StackPanel>
                             </Border>
 
+                            <!-- Remote images blocked notification -->
+                            <Border x:Name="RemoteImagesBar" DockPanel.Dock="Top"
+                                    Padding="8,6" Background="{StaticResource WarningBackgroundBrush}"
+                                    BorderBrush="{StaticResource WarningBorderBrush}" BorderThickness="0,0,0,1"
+                                    Visibility="Collapsed">
+                                <DockPanel>
+                                    <Button DockPanel.Dock="Right" Content="Load Images"
+                                            Click="LoadRemoteImages_Click"
+                                            Style="{StaticResource ToolbarButton}"
+                                            Foreground="{StaticResource PrimaryBrush}"
+                                            FontSize="12" Padding="8,2" />
+                                    <TextBlock Text="Remote images have been blocked to protect your privacy."
+                                               VerticalAlignment="Center" FontSize="12"
+                                               Foreground="{StaticResource WarningTextBrush}" />
+                                </DockPanel>
+                            </Border>
+
                             <!-- WebView2 for HTML rendering -->
                             <Border>
                                 <wpf:WebView2 x:Name="EmailWebView"

@@ -17,6 +17,9 @@
     <SolidColorBrush x:Key="ReadBrush" Color="#666666" />
     <SolidColorBrush x:Key="SelectedItemBrush" Color="#E5F1FB" />
     <SolidColorBrush x:Key="ErrorBrush" Color="#D32F2F" />
+    <SolidColorBrush x:Key="WarningBackgroundBrush" Color="#FFF8E1" />
+    <SolidColorBrush x:Key="WarningBorderBrush" Color="#FFE082" />
+    <SolidColorBrush x:Key="WarningTextBrush" Color="#5D4037" />
 
     <!-- Default button style -->
     <Style x:Key="PrimaryButton" TargetType="Button">

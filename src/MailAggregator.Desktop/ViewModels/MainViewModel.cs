@@ -19,6 +19,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private readonly ISyncManager _syncManager;
     private readonly ILogger _logger;
     private CancellationTokenSource? _folderSwitchCts;
+    private CancellationTokenSource? _loadAccountsCts;
 
     [ObservableProperty]
     private ObservableCollection<AccountFolderNode> _folderTree = [];
@@ -63,6 +64,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _syncManager.NewEmailsReceived -= OnNewEmailsReceived;
         _folderSwitchCts?.Cancel();
         _folderSwitchCts?.Dispose();
+        _loadAccountsCts?.Cancel();
+        _loadAccountsCts?.Dispose();
     }
 
     public async Task InitializeAsync()
@@ -76,12 +79,20 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private async Task LoadAccountsAsync()
     {
+        // Cancel any previous in-flight load to abort stale IMAP connections
+        // (e.g. connections using old proxy settings from a prior account config)
+        _loadAccountsCts?.Cancel();
+        _loadAccountsCts?.Dispose();
+        _loadAccountsCts = new CancellationTokenSource();
+        var ct = _loadAccountsCts.Token;
+
         try
         {
             StatusText = "Loading accounts...";
             IsSyncing = true;
 
-            var accounts = await _accountService.GetAllAccountsAsync();
+            var accounts = await _accountService.GetAllAccountsAsync(ct);
+            ct.ThrowIfCancellationRequested();
             Accounts = new ObservableCollection<Account>(accounts);
 
             // Sync folders for all accounts concurrently (per-account errors don't block others)
@@ -89,8 +100,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
             {
                 try
                 {
-                    var folders = await _emailSyncService.SyncFoldersAsync(account);
+                    var folders = await _emailSyncService.SyncFoldersAsync(account, ct);
                     return (account, folders: (IReadOnlyList<MailFolder>?)folders);
+                }
+                catch (OperationCanceledException)
+                {
+                    return (account, folders: null);
                 }
                 catch (Exception ex)
                 {
@@ -99,6 +114,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 }
             });
             var results = await Task.WhenAll(syncTasks);
+
+            ct.ThrowIfCancellationRequested();
 
             var newTree = new ObservableCollection<AccountFolderNode>();
             foreach (var (account, folders) in results)
@@ -126,7 +143,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
                 newTree.Add(accountNode);
 
-                // Start background sync
+                // Start background sync (don't pass ct — sync should outlive the load)
                 if (account.IsEnabled)
                 {
                     _ = _syncManager.StartAccountSyncAsync(account).ContinueWith(t =>
@@ -146,6 +163,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
             }
 
             StatusText = $"{accounts.Count} account(s) loaded";
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Previous load cancelled by a newer load — expected, no error
         }
         catch (Exception ex)
         {
@@ -384,6 +405,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private void OpenAccountSettings()
     {
+        // Cancel any in-flight load so stale IMAP connections (e.g. using old proxy
+        // settings) are aborted immediately rather than running until timeout.
+        _loadAccountsCts?.Cancel();
+        _loadAccountsCts?.Dispose();
+        _loadAccountsCts = null;
+
         var vm = App.Services.GetRequiredService<AccountListViewModel>();
         var window = new Views.AccountListWindow { DataContext = vm };
         window.ShowDialog();

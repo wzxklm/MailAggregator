@@ -9,6 +9,7 @@ public partial class MainWindow : Window
 {
     private readonly MainViewModel _viewModel;
     private bool _webViewInitialized;
+    private bool _allowExternalImages;
 
     public MainWindow(MainViewModel viewModel)
     {
@@ -59,12 +60,12 @@ public partial class MainWindow : Window
                 }
             };
 
-            // Block external resource loading by default (anti-tracking)
+            // Block external resource loading by default (anti-tracking), allow when user clicks "Load Images"
             EmailWebView.CoreWebView2.AddWebResourceRequestedFilter("*", CoreWebView2WebResourceContext.Image);
             EmailWebView.CoreWebView2.WebResourceRequested += (_, args) =>
             {
                 var uri = args.Request.Uri;
-                if (uri.StartsWith("http://") || uri.StartsWith("https://"))
+                if (!_allowExternalImages && (uri.StartsWith("http://") || uri.StartsWith("https://")))
                 {
                     args.Response = EmailWebView.CoreWebView2.Environment.CreateWebResourceResponse(
                         null, 403, "Blocked", "");
@@ -92,6 +93,7 @@ public partial class MainWindow : Window
     {
         if (e.PropertyName == nameof(MainViewModel.SelectedEmail))
         {
+            _allowExternalImages = false;
             var email = _viewModel.SelectedEmail;
             UpdateEmailPreview(email?.BodyHtml, email?.BodyText);
         }
@@ -100,6 +102,14 @@ public partial class MainWindow : Window
     private void UpdateEmailPreview(string? htmlContent, string? textContent)
     {
         if (!_webViewInitialized) return;
+
+        // Show notification bar when external images are blocked
+        if (!_allowExternalImages)
+        {
+            RemoteImagesBar.Visibility = HasExternalImages(htmlContent)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
 
         if (!string.IsNullOrEmpty(htmlContent))
         {
@@ -114,5 +124,22 @@ public partial class MainWindow : Window
         {
             EmailWebView.NavigateToString("<html><body></body></html>");
         }
+    }
+
+    private void LoadRemoteImages_Click(object sender, RoutedEventArgs e)
+    {
+        _allowExternalImages = true;
+        RemoteImagesBar.Visibility = Visibility.Collapsed;
+        var email = _viewModel.SelectedEmail;
+        UpdateEmailPreview(email?.BodyHtml, email?.BodyText);
+    }
+
+    private static bool HasExternalImages(string? html)
+    {
+        if (string.IsNullOrEmpty(html)) return false;
+        return html.Contains("src=\"http://", StringComparison.OrdinalIgnoreCase)
+            || html.Contains("src=\"https://", StringComparison.OrdinalIgnoreCase)
+            || html.Contains("src='http://", StringComparison.OrdinalIgnoreCase)
+            || html.Contains("src='https://", StringComparison.OrdinalIgnoreCase);
     }
 }
