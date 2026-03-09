@@ -52,6 +52,27 @@ public class ImapConnectionService : IImapConnectionService
                     account.ImapHost, account.ImapPort, account.ImapEncryption, account.EmailAddress);
 
                 await client.ConnectAsync(account.ImapHost, account.ImapPort, secureSocketOptions, cancellationToken);
+
+                // Send IMAP ID command before authentication (RFC 2971).
+                // Providers like 163.com (Coremail) require the client to identify itself
+                // before accepting LOGIN, otherwise they reject with "Unsafe Login".
+                if (client.Capabilities.HasFlag(ImapCapabilities.Id))
+                {
+                    try
+                    {
+                        await client.IdentifyAsync(new ImapImplementation
+                        {
+                            Name = "MailAggregator",
+                            Version = "1.0"
+                        }, cancellationToken);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _logger.Warning(ex, "IMAP ID command failed for {Email}, continuing without identification",
+                            account.EmailAddress);
+                    }
+                }
+
                 await MailConnectionHelper.AuthenticateAsync(client, account, _encryption, cancellationToken, _oAuthService,
                     onTokenRefreshed: PersistRefreshedTokenAsync);
 

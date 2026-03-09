@@ -18,6 +18,7 @@
 
 - **命名冲突 — MailFolder**：`MailKit.MailFolder` 与 `Models.MailFolder` 冲突 → 必须用 `using LocalMailFolder = MailAggregator.Core.Models.MailFolder`
 - **命名冲突 — Account**：`Services.AccountManagement` 命名空间导致 `Account` 模型歧义 → 用 `using LocalAccount = MailAggregator.Core.Models.Account`
+- **IMAP ID 命令（RFC 2971）须在认证前发送**：163.com（Coremail）等服务器要求客户端先 `IdentifyAsync` 声明身份，否则拒绝登录（"Unsafe Login"）。仅在 `ImapCapabilities.Id` 存在时发送，失败时 log + 吞掉异常继续认证流程，不影响不支持 ID 的服务器
 - **IMAP IDLE 必须独立连接**：IDLE 占用连接，不能复用同步连接。连接池 per-account 最多 2 个连接
 - **IDLE 超时**：RFC 2177 要求 < 30 分钟，项目设 29 分钟。超时后必须重新打开文件夹再进入 IDLE
 - **连接复用前必须验证**：从池中取出的连接必须检查 `IsConnected && IsAuthenticated`，失效则释放

@@ -38,6 +38,7 @@ Shared logic for all IMAP/SMTP connections (internal static).
 
 - 3 retries + exponential backoff
 - SOCKS5 proxy support
+- **IMAP ID (RFC 2971)**: After connecting, if the server advertises `ImapCapabilities.Id`, sends an `IdentifyAsync` with client name/version before authentication. Required by providers like 163.com (Coremail) that reject login without client identification ("Unsafe Login"). Failure is non-fatal (logged and swallowed)
 - OAuth token refresh + persist refreshed tokens (`PersistRefreshedTokenAsync`)
 - **Interface**: `IImapConnectionService` — `ConnectAsync(account)`
 
