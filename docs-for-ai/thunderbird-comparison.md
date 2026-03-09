@@ -77,8 +77,8 @@
 
 | # | 问题 | 说明 |
 |---|------|------|
-| 9 | `invalid_grant` 时无自动重认证 | Thunderbird 自动弹窗重新授权（`requestAuthorization()`），我们直接抛 `HttpRequestException` |
-| 10 | Token 刷新无并发保护 | IMAP/SMTP 同时刷新同一账户 token 时 Google 会使旧 refresh token 失效，建议添加 per-account `SemaphoreSlim` |
+| 9 | ~~`invalid_grant` 时无自动重认证~~ | ✅ 已修复：`OAuthService` 检测 `invalid_grant` 并抛出 `OAuthReauthenticationRequiredException`；`SyncManager` 捕获此异常停止同步，提示用户重新授权 |
+| 10 | ~~Token 刷新无并发保护~~ | ✅ 已修复：`MailConnectionHelper` 使用 per-account `SemaphoreSlim`（`ConcurrentDictionary<int, SemaphoreSlim>`）+ double-check pattern 防止 IMAP/SMTP 并发刷新；删除账户时 `RemoveTokenRefreshLock` 清理信号量防内存泄漏 |
 | 11 | ~~Token 过期检查无 grace time~~ | ✅ 已修复：`MailConnectionHelper.TokenRefreshGracePeriod` 提前 60 秒刷新 |
 
 ### Mail 模块
@@ -86,29 +86,29 @@
 | # | 问题 | 说明 |
 |---|------|------|
 | 12 | 缺少 CONDSTORE/QRESYNC 支持 | 增量同步每次 `SEARCH ALL` 获取全部 UID 做删除检测，大邮箱极慢（O(N) vs O(changed)） |
-| 13 | 连接池缺少过期连接清理 | 无后台定时清理，NAT/移动网络中僵尸连接（TCP 已断但 `IsConnected` 仍 true）被交给调用方 |
+| 13 | ~~连接池缺少过期连接清理~~ | ✅ 已修复：`ImapConnectionPool` 新增后台 `Timer`（5 分钟间隔）定期清理断开/未认证的僵尸连接；`CleanupStaleConnections` 检查 `_disposed` 守卫 |
 | 14 | SMTP 无连接复用 | 每次发送新建连接。Thunderbird 有完整 SMTP 连接池（空闲池、忙碌池、等待队列、延迟关闭） |
 
 ### Sync 模块
 
 | # | 问题 | 说明 |
 |---|------|------|
-| 15 | 不检查 IMAP IDLE 能力 | 直接调用 `client.IdleAsync()` 未检查 `ImapCapabilities.Idle`，不支持 IDLE 的服务器上无限重连失败 |
-| 16 | IDLE 被拒绝无降级处理 | 服务器以 BAD/NO 拒绝 IDLE 命令后进入无限重连循环，应降级为定时轮询 |
+| 15 | ~~不检查 IMAP IDLE 能力~~ | ✅ 已修复：`SyncManager` 在进入监视循环前检查 `ImapCapabilities.Idle`，不支持时自动降级为 2 分钟轮询（`PollingInterval`）+ `NoOpAsync` 刷新状态 |
+| 16 | ~~IDLE 被拒绝无降级处理~~ | ✅ 已修复：`IdleWaitAsync` 捕获 `ImapCommandException`（BAD/NO 响应），降级为当次循环使用轮询延迟，不再进入无限重连 |
 
 ### Discovery 模块
 
 | # | 问题 | 说明 |
 |---|------|------|
-| 17 | Level 1/2/3 串行查询 | Thunderbird 全部并行 + `promiseFirstSuccessful`，我们最坏情况 3×10s=30s 等待 |
-| 18 | 只尝试 HTTPS，不回退 HTTP | 许多企业/小型 ISP 只在 HTTP 上提供 autoconfig |
-| 19 | 不解析 XML 中的 `<authentication>` | 无法从 autoconfig 判断应用 OAuth2 还是密码认证 |
+| 17 | ~~Level 1/2/3 串行查询~~ | ✅ 已修复：Level 1-3（含 HTTP 回退）通过 `Task.WhenAny` 并行请求，首个成功结果立即取消剩余请求（`CancellationTokenSource`），类似 Thunderbird 的 `promiseFirstSuccessful` |
+| 18 | ~~只尝试 HTTPS，不回退 HTTP~~ | ✅ 已修复：Level 1-2 增加 HTTP 回退 URL（`http://autoconfig.{domain}/...` 和 `http://{domain}/.well-known/...`），与 HTTPS URL 一同并行请求 |
+| 19 | ~~不解析 XML 中的 `<authentication>`~~ | ✅ 已修复：`ParseAutoconfigXml` 提取 `<authentication>` 元素值（如 `"OAuth2"`, `"password-cleartext"`）到 `ServerConfiguration.Authentication` 属性 |
 
 ### AccountMgmt 模块
 
 | # | 问题 | 说明 |
 |---|------|------|
-| 20 | 更新账户无验证，不通知运行中的服务 | 不校验 hostname/port 合法性，改了 IMAP 配置但 SyncManager 继续用旧配置连接 |
+| 20 | ~~更新账户无验证，不通知运行中的服务~~ | ✅ 已修复：`AccountService.UpdateAccountAsync` 校验 IMAP/SMTP host 非空和 port 范围（1-65535）；更新后若账户正在同步则自动重启（stop → remove pool → start） |
 
 ---
 
@@ -153,18 +153,18 @@
 
 | 模块 | MailAggregator | Thunderbird |
 |------|---------------|-------------|
-| Auth | ~300 行 | ~1200 行（OAuth2.sys.mjs + OAuth2Module.sys.mjs + OAuth2Providers.sys.mjs） |
-| Discovery | ~295 行 | ~1500 行（FindConfig + FetchConfig + GuessConfig + ExchangeAutoDiscover + DNS + Sanitizer） |
-| Mail | ~700 行 | ~8000+ 行（nsImapProtocol.cpp 单文件） |
-| Sync | ~300 行 | ~2500 行（nsAutoSyncManager + nsAutoSyncState） |
-| AccountMgmt | ~200 行 | ~2000 行（nsMsgAccountManager.cpp） |
-| **总计** | **~1800 行** | **~15000+ 行** |
+| Auth | ~475 行 | ~1200 行（OAuth2.sys.mjs + OAuth2Module.sys.mjs + OAuth2Providers.sys.mjs） |
+| Discovery | ~350 行 | ~1500 行（FindConfig + FetchConfig + GuessConfig + ExchangeAutoDiscover + DNS + Sanitizer） |
+| Mail | ~960 行 | ~8000+ 行（nsImapProtocol.cpp 单文件） |
+| Sync | ~330 行 | ~2500 行（nsAutoSyncManager + nsAutoSyncState） |
+| AccountMgmt | ~250 行 | ~2000 行（nsMsgAccountManager.cpp） |
+| **总计** | **~2360 行** | **~15000+ 行** |
 
 简洁来自 MailKit 的高质量抽象，而非功能缺失。
 
 ### 4. 测试覆盖（全局）
 
-- **177 个单元测试**，覆盖所有核心模块的正向/异常路径
+- **179 个单元测试**，覆盖所有核心模块的正向/异常路径
 - 使用内存 SQLite + Moq + FluentAssertions 框架，运行快、隔离好
 - Thunderbird 主要依赖集成测试（需要模拟 IMAP 服务器），单元覆盖率较低
 
@@ -195,14 +195,14 @@
 | 维度 | MailAggregator | Thunderbird | 胜出 |
 |------|---------------|-------------|------|
 | 凭据加密 | AES-256-GCM + DPAPI | LoginManager 默认不加密 | 我们 |
-| 代码简洁性 | ~1800 行 | ~15000+ 行 | 我们 |
-| 测试覆盖 | 177 个单元测试 | 集成测试为主 | 我们 |
+| 代码简洁性 | ~2360 行 | ~15000+ 行 | 我们 |
+| 测试覆盖 | 179 个单元测试 | 集成测试为主 | 我们 |
 | 异步模型 | async/await | 手动线程管理 | 我们 |
-| OAuth 安全性 | state + PKCE（仍缺并发保护） | 内嵌浏览器 + 全局锁 | Thunderbird |
-| 协议支持深度 | 基础 IMAP/SMTP | CONDSTORE/IDLE 降级/分块下载 | Thunderbird |
-| 服务器发现 | 5 级回退（串行） | 8+ 级回退（并行） + Exchange | Thunderbird |
+| OAuth 安全性 | state + PKCE + per-account 并发保护 + invalid_grant 检测 | 内嵌浏览器 + 全局锁 | 持平 |
+| 协议支持深度 | 基础 IMAP/SMTP + IDLE 降级轮询 | CONDSTORE/IDLE 降级/分块下载 | Thunderbird |
+| 服务器发现 | 5 级回退（并行 + HTTP 回退） | 8+ 级回退（并行） + Exchange | Thunderbird |
 | 多文件夹同步 | 仅 Inbox IDLE | 三级队列全文件夹 | Thunderbird |
 | 资源管理 | 删除时完整清理（sync+pool+files） | 完整清理链 | 持平 |
 | 错误恢复 | 基础指数退避 | 网络感知 + 细粒度错误分类 | Thunderbird |
 
-**核心结论**：我们在**加密安全**、**代码简洁性**和**现代架构**上显著优于 Thunderbird。P0 的 8 项严重问题已全部修复（OAuth CSRF、端口 TOCTOU、Sent 文件夹、线程安全 DbContext、重复账户、删除清理、ccSLD 解析、nslookup 注入/超时）。剩余差距在**协议完整性**（CONDSTORE、IDLE 降级、Exchange AutoDiscover、SRV 记录）和**并发 token 刷新保护**。
+**核心结论**：我们在**加密安全**、**代码简洁性**和**现代架构**上显著优于 Thunderbird。P0 的 8 项严重问题已全部修复。P1 的 12 项中已修复 9 项（#9 invalid_grant 检测、#10 token 刷新并发保护、#11 token 宽限期、#13 连接池定时清理、#15 IDLE 能力检查、#16 IDLE 拒绝降级、#17 并行发现、#18 HTTP 回退、#19 authentication 解析、#20 账户更新验证+同步重启）。剩余差距在**协议完整性**（CONDSTORE、Exchange AutoDiscover、SRV 记录）和 **SMTP 连接复用**。

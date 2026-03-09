@@ -9,15 +9,26 @@ public class ImapConnectionPool : IImapConnectionPool
 {
     private const int MaxPoolSizePerAccount = 2;
 
+    /// <summary>
+    /// Interval for the background cleanup timer that removes stale/zombie connections.
+    /// NAT and mobile networks can silently drop TCP connections, leaving them
+    /// in a state where IsConnected is true but the connection is dead.
+    /// </summary>
+    internal static readonly TimeSpan CleanupInterval = TimeSpan.FromMinutes(5);
+
     private readonly ConcurrentDictionary<int, ConcurrentQueue<ImapClient>> _pool = new();
     private readonly IImapConnectionService _connectionService;
     private readonly ILogger _logger;
+    private readonly Timer _cleanupTimer;
     private bool _disposed;
 
     public ImapConnectionPool(IImapConnectionService connectionService, ILogger logger)
     {
         _connectionService = connectionService ?? throw new ArgumentNullException(nameof(connectionService));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+
+        // Start background timer to periodically clean up stale connections
+        _cleanupTimer = new Timer(_ => CleanupStaleConnections(), null, CleanupInterval, CleanupInterval);
     }
 
     public async Task<PooledImapConnection> GetConnectionAsync(Account account, CancellationToken cancellationToken = default)
@@ -35,7 +46,7 @@ public class ImapConnectionPool : IImapConnectionPool
             }
 
             // Stale connection
-            client.Dispose();
+            DisposeClient(client);
         }
 
         // No pooled connection available, create a new one
@@ -63,6 +74,44 @@ public class ImapConnectionPool : IImapConnectionPool
         }
     }
 
+    /// <summary>
+    /// Removes stale connections from all account queues.
+    /// A connection is stale if it is no longer connected or authenticated.
+    /// </summary>
+    internal void CleanupStaleConnections()
+    {
+        if (_disposed) return;
+
+        var totalRemoved = 0;
+        foreach (var kvp in _pool)
+        {
+            var accountId = kvp.Key;
+            var queue = kvp.Value;
+            var count = queue.Count;
+
+            for (int i = 0; i < count; i++)
+            {
+                if (!queue.TryDequeue(out var client))
+                    break;
+
+                if (client.IsConnected && client.IsAuthenticated)
+                {
+                    queue.Enqueue(client);
+                }
+                else
+                {
+                    DisposeClient(client);
+                    totalRemoved++;
+                }
+            }
+        }
+
+        if (totalRemoved > 0)
+        {
+            _logger.Debug("Connection pool cleanup removed {Count} stale connection(s)", totalRemoved);
+        }
+    }
+
     public void RemoveAccount(int accountId)
     {
         if (_pool.TryRemove(accountId, out var queue))
@@ -75,6 +124,7 @@ public class ImapConnectionPool : IImapConnectionPool
     public void Dispose()
     {
         _disposed = true;
+        _cleanupTimer.Dispose();
         foreach (var kvp in _pool)
         {
             while (kvp.Value.TryDequeue(out var client))

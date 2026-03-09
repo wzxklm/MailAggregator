@@ -4,12 +4,14 @@
 
 5-level fallback to find IMAP/SMTP server config from email address:
 
-- **Level 1**: `https://autoconfig.{domain}/mail/config-v1.1.xml`
-- **Level 2**: `https://{domain}/.well-known/autoconfig/mail/config-v1.1.xml`
+- **Level 1**: `https://autoconfig.{domain}/mail/config-v1.1.xml` (+ HTTP fallback)
+- **Level 2**: `https://{domain}/.well-known/autoconfig/mail/config-v1.1.xml` (+ HTTP fallback)
 - **Level 3**: `https://autoconfig.thunderbird.net/v1.1/{domain}` (Thunderbird ISPDB)
 - **Level 4**: DNS MX query → retry Level 1-3 with MX domain
 - **Level 5**: null (UI prompts manual config)
-- **XML parsing**: `ParseAutoconfigXml()` from Thunderbird-format XML
+- **Parallel discovery**: Levels 1-3 (including HTTP fallback URLs) run in parallel via `Task.WhenAny` (Thunderbird-style `promiseFirstSuccessful`). First successful result cancels remaining requests via linked `CancellationTokenSource`
+- **HTTP fallback**: Levels 1-2 also attempt HTTP URLs because many enterprise/small ISP servers only serve autoconfig over HTTP
+- **XML parsing**: `ParseAutoconfigXml()` from Thunderbird-format XML. Extracts `<authentication>` element (e.g., `"OAuth2"`, `"password-cleartext"`, `"password-encrypted"`) into `ServerConfiguration.Authentication` property
 - **MX parsing**: `nslookup` process, extract base domain; handles ccSLDs (co.uk, com.au, etc.) via `TwoLevelTlds` set
 - **MX security**: `ValidDomainRegex` prevents command injection; linked `CancellationTokenSource` enforces 10s nslookup timeout with `process.Kill()` on expiry
 - **Timeout**: 10s per HTTP request, 10s per nslookup
@@ -27,6 +29,8 @@ Shared logic for all IMAP/SMTP connections (internal static).
 - `AuthenticateAsync(client, account, ...)` — unified auth:
   - OAuth2: check token expiry (60s grace) → refresh if needed → OAuth2 SASL
   - Password: decrypt → plaintext auth
+- **Token refresh concurrency protection**: Per-account `SemaphoreSlim` (stored in `ConcurrentDictionary<int, SemaphoreSlim>`) prevents IMAP and SMTP from refreshing the same account's token simultaneously. Uses double-check pattern: re-checks expiry after acquiring lock in case another caller already refreshed
+- `RemoveTokenRefreshLock(accountId)` — disposes and removes the semaphore for a deleted account (called by `AccountService.DeleteAccountAsync` to prevent memory leaks)
 
 ## IMAP Connection — `Services/Mail/ImapConnectionService.cs`
 
@@ -48,6 +52,7 @@ Reuse IMAP connections to avoid repeated TCP+TLS+AUTH handshakes.
 - **Max connections**: 2 per account
 - **Validation**: check `IsConnected && IsAuthenticated` before reuse
 - **Graceful degradation**: stale connections auto-released
+- **Background cleanup timer**: `Timer` fires every 5 minutes (`CleanupInterval`) to remove stale/zombie connections from all account queues. Iterates each queue, dequeues and re-enqueues live connections, disposes dead ones. Guards against `_disposed` to avoid running after pool disposal. Handles NAT/mobile networks that silently drop TCP connections
 - `GetConnectionAsync(account)` / `ReturnToPool(accountId, client)` / `RemoveAccount(accountId)`
 - **Interface**: `IImapConnectionPool`
 
@@ -104,8 +109,8 @@ Uses `IDbContextFactory<MailAggregatorDbContext>` — each operation creates its
 
 - **AddAccountAsync(emailAddress, password?)** — flow:
   0. Check for duplicate email (+ unique DB index on `EmailAddress`) → 1. AutoDiscovery → 2. Create Account entity → 3. Check OAuth provider → 4. OAuth → set AuthType=OAuth2 / 5. Password → encrypt & store → 6. Validate IMAP (password only) → 7. Save to DB
-- **UpdateAccountAsync** — update settings
-- **DeleteAccountAsync** — full cleanup: 1. Stop SyncManager for account → 2. Release ImapConnectionPool → 3. Delete attachment files from disk → 4. Cascade delete DB entities (account + folders + messages + attachments)
+- **UpdateAccountAsync** — validates host/port (non-empty host, port 1-65535 for both IMAP and SMTP), saves to DB, then restarts sync if the account is currently syncing (stop → remove pool connections → start with new config)
+- **DeleteAccountAsync** — full cleanup: 1. Stop SyncManager for account → 2. Release ImapConnectionPool → 3. Remove token refresh lock (`MailConnectionHelper.RemoveTokenRefreshLock`) → 4. Delete attachment files from disk → 5. Cascade delete DB entities (account + folders + messages + attachments)
 - **GetAllAccountsAsync** / **GetAccountByIdAsync**
 - **ValidateConnectionAsync** — test IMAP connection
 - **Dependencies**: Injects `ISyncManager` and `IImapConnectionPool` for deletion cleanup
@@ -117,13 +122,15 @@ Uses `IDbContextFactory<MailAggregatorDbContext>` — each operation creates its
 
 IMAP IDLE background sync orchestrator.
 
-- **Constants**: `IdleTimeout = 29min` (RFC 2177 < 30min), `InitialReconnectDelay = 1s`, `MaxReconnectDelay = 60s`
+- **Constants**: `IdleTimeout = 29min` (RFC 2177 < 30min), `InitialReconnectDelay = 1s`, `MaxReconnectDelay = 60s`, `PollingInterval = 2min`
 - **Concurrency**: `ConcurrentDictionary<int, (Task, CancellationTokenSource)>` per-account
-- **IDLE loop** (`AccountSyncLoopAsync`):
-  1. Connect IMAP → 2. Sync folders → 3. Inbox incremental sync → 4. Open Inbox, enter IDLE
-  5. IDLE cycle: wait 29min or new mail → detect new messages → incremental sync → fire `NewEmailsReceived` → re-enter IDLE
+- **Watch loop** (`AccountSyncLoopAsync`):
+  1. Connect IMAP → 2. Sync folders → 3. Inbox incremental sync → 4. Open Inbox, check `ImapCapabilities.Idle`
+  5a. **IDLE path** (server supports IDLE): `IdleWaitAsync` enters IDLE, breaks on 29min timeout or server notification. If server rejects IDLE with BAD/NO (`ImapCommandException`), falls back to polling delay for that cycle
+  5b. **Polling path** (no IDLE capability): `Task.Delay(PollingInterval)` + `NoOpAsync` to refresh server state
+  6. Detect new messages → incremental sync → fire `NewEmailsReceived` → re-enter loop
 - **Exponential backoff**: `delay = min(1s × 2^attempt, 60s)`
-- **Auth error handling**: non-transient auth errors → stop (no retry)
+- **Auth error handling**: non-transient auth errors → stop (no retry). `OAuthReauthenticationRequiredException` (invalid_grant) breaks the sync loop without retrying
 - **Graceful shutdown**: `StopAllAsync()` — cancel all tokens, await all tasks
 - **Event**: `NewEmailsReceived` (`EventHandler<NewEmailsEventArgs>`)
 - **Interface**: `ISyncManager`
@@ -134,7 +141,8 @@ IMAP IDLE background sync orchestrator.
 
 | Component | Mechanism |
 |-----------|-----------|
-| IMAP pool | `ConcurrentDictionary` + `ConcurrentQueue` |
+| IMAP pool | `ConcurrentDictionary` + `ConcurrentQueue` + background `Timer` cleanup (5min) |
+| Token refresh | Per-account `SemaphoreSlim` with double-check pattern (prevents IMAP/SMTP concurrent refresh) |
 | SyncManager | `ConcurrentDictionary.GetOrAdd()` (atomic, no TOCTOU) |
 | DB operations | `IDbContextFactory` → scoped DbContext per operation (EmailSyncService, ImapConnectionService, SmtpConnectionService) |
 | EF Core save | `SaveChangesSafeAsync()` — detach + retry on conflict |

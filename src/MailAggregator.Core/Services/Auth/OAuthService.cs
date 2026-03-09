@@ -251,6 +251,15 @@ public class OAuthService : IOAuthService
         if (!response.IsSuccessStatusCode)
         {
             _logger.Error("{Operation} failed with status {StatusCode}: {Body}", operationName, response.StatusCode, responseBody);
+
+            // Detect invalid_grant: the refresh token has been revoked or expired.
+            // Callers should catch OAuthReauthenticationRequiredException to trigger re-auth.
+            if (responseBody.Contains("invalid_grant", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new OAuthReauthenticationRequiredException(
+                    $"OAuth refresh token is invalid or revoked for {provider.Name}. Re-authentication required.");
+            }
+
             throw new HttpRequestException($"{operationName} failed with status {response.StatusCode}: {responseBody}");
         }
 

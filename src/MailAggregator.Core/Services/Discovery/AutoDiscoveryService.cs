@@ -97,23 +97,45 @@ public class AutoDiscoveryService : IAutoDiscoveryService
 
     private async Task<ServerConfiguration?> TryDiscoverForDomainAsync(string domain, CancellationToken cancellationToken)
     {
-        // Level 1: autoconfig.{domain}
-        var url1 = $"https://autoconfig.{domain}/mail/config-v1.1.xml";
-        var config = await TryFetchAndParseAsync(url1, "Level 1 (autoconfig subdomain)", cancellationToken);
-        if (config != null)
-            return config;
+        // Run Levels 1-3 in parallel (Thunderbird uses promiseFirstSuccessful)
+        var urls = new[]
+        {
+            ($"https://autoconfig.{domain}/mail/config-v1.1.xml", "Level 1 (autoconfig subdomain HTTPS)"),
+            ($"https://{domain}/.well-known/autoconfig/mail/config-v1.1.xml", "Level 2 (well-known HTTPS)"),
+            ($"https://autoconfig.thunderbird.net/v1.1/{domain}", "Level 3 (Thunderbird ISPDB)"),
+            // HTTP fallback for Levels 1-2 (many enterprise/small ISP servers only serve HTTP)
+            ($"http://autoconfig.{domain}/mail/config-v1.1.xml", "Level 1 (autoconfig subdomain HTTP)"),
+            ($"http://{domain}/.well-known/autoconfig/mail/config-v1.1.xml", "Level 2 (well-known HTTP)"),
+        };
 
-        // Level 2: {domain}/.well-known/autoconfig
-        var url2 = $"https://{domain}/.well-known/autoconfig/mail/config-v1.1.xml";
-        config = await TryFetchAndParseAsync(url2, "Level 2 (well-known path)", cancellationToken);
-        if (config != null)
-            return config;
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var tasks = urls.Select(u => TryFetchAndParseAsync(u.Item1, u.Item2, cts.Token)).ToList();
 
-        // Level 3: Thunderbird ISPDB
-        var url3 = $"https://autoconfig.thunderbird.net/v1.1/{domain}";
-        config = await TryFetchAndParseAsync(url3, "Level 3 (Thunderbird ISPDB)", cancellationToken);
-        if (config != null)
-            return config;
+        // Return the first successful result, cancel remaining requests
+        while (tasks.Count > 0)
+        {
+            var completed = await Task.WhenAny(tasks);
+            tasks.Remove(completed);
+
+            try
+            {
+                var config = await completed;
+                if (config != null)
+                {
+                    // Cancel remaining parallel requests
+                    await cts.CancelAsync();
+                    return config;
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch
+            {
+                // Individual fetch failed, continue waiting for others
+            }
+        }
 
         return null;
     }
@@ -195,6 +217,11 @@ public class AutoDiscoveryService : IAutoDiscoveryService
                 config.ImapPort = imapPort;
 
             config.ImapEncryption = ParseSocketType(incomingServer.Element("socketType")?.Value);
+
+            // Parse authentication method (e.g., "OAuth2", "password-cleartext", "password-encrypted")
+            var auth = incomingServer.Element("authentication")?.Value?.Trim();
+            if (!string.IsNullOrEmpty(auth))
+                config.Authentication = auth;
         }
 
         if (outgoingServer != null)

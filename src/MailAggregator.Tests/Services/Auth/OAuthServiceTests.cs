@@ -432,11 +432,29 @@ public class OAuthServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task ExchangeCodeForTokenAsync_ErrorResponse_ThrowsHttpRequestException()
+    public async Task ExchangeCodeForTokenAsync_InvalidGrant_ThrowsOAuthReauthenticationRequired()
     {
         var mockHandler = CreateMockHttpHandler(
             HttpStatusCode.BadRequest,
             "{\"error\":\"invalid_grant\"}");
+
+        var httpClient = new HttpClient(mockHandler.Object);
+        var service = CreateService(httpClient);
+        var provider = TestProviders[0];
+
+        var act = () => service.ExchangeCodeForTokenAsync(
+            provider, "bad-code", "verifier", "http://localhost:12345/");
+
+        await act.Should().ThrowAsync<OAuthReauthenticationRequiredException>()
+            .WithMessage("*Re-authentication required*");
+    }
+
+    [Fact]
+    public async Task ExchangeCodeForTokenAsync_OtherError_ThrowsHttpRequestException()
+    {
+        var mockHandler = CreateMockHttpHandler(
+            HttpStatusCode.BadRequest,
+            "{\"error\":\"invalid_client\"}");
 
         var httpClient = new HttpClient(mockHandler.Object);
         var service = CreateService(httpClient);
@@ -518,11 +536,28 @@ public class OAuthServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task RefreshTokenAsync_ErrorResponse_ThrowsHttpRequestException()
+    public async Task RefreshTokenAsync_InvalidGrant_ThrowsOAuthReauthenticationRequired()
     {
         var mockHandler = CreateMockHttpHandler(
             HttpStatusCode.Unauthorized,
             "{\"error\":\"invalid_grant\"}");
+
+        var httpClient = new HttpClient(mockHandler.Object);
+        var service = CreateService(httpClient);
+        var provider = TestProviders[0];
+
+        var act = () => service.RefreshTokenAsync(provider, "ENC:expired-token");
+
+        await act.Should().ThrowAsync<OAuthReauthenticationRequiredException>()
+            .WithMessage("*Re-authentication required*");
+    }
+
+    [Fact]
+    public async Task RefreshTokenAsync_OtherError_ThrowsHttpRequestException()
+    {
+        var mockHandler = CreateMockHttpHandler(
+            HttpStatusCode.Unauthorized,
+            "{\"error\":\"server_error\"}");
 
         var httpClient = new HttpClient(mockHandler.Object);
         var service = CreateService(httpClient);

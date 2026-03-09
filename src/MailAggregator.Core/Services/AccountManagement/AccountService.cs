@@ -136,8 +136,27 @@ public class AccountService : IAccountService
 
         _logger.Information("Updating account {AccountId} ({EmailAddress})", account.Id, account.EmailAddress);
 
+        // Validate server settings
+        if (string.IsNullOrWhiteSpace(account.ImapHost))
+            throw new ArgumentException("IMAP host cannot be empty.", nameof(account));
+        if (account.ImapPort <= 0 || account.ImapPort > 65535)
+            throw new ArgumentException($"IMAP port {account.ImapPort} is out of valid range (1-65535).", nameof(account));
+        if (string.IsNullOrWhiteSpace(account.SmtpHost))
+            throw new ArgumentException("SMTP host cannot be empty.", nameof(account));
+        if (account.SmtpPort <= 0 || account.SmtpPort > 65535)
+            throw new ArgumentException($"SMTP port {account.SmtpPort} is out of valid range (1-65535).", nameof(account));
+
         _dbContext.Accounts.Update(account);
         await _dbContext.SaveChangesAsync(cancellationToken);
+
+        // Restart sync so it picks up the new configuration
+        if (_syncManager.IsAccountSyncing(account.Id))
+        {
+            _logger.Information("Restarting sync for account {AccountId} after config update", account.Id);
+            await _syncManager.StopAccountSyncAsync(account.Id);
+            _connectionPool.RemoveAccount(account.Id);
+            await _syncManager.StartAccountSyncAsync(account, cancellationToken);
+        }
 
         _logger.Information("Account {AccountId} updated successfully", account.Id);
 
@@ -160,8 +179,9 @@ public class AccountService : IAccountService
         // Step 1: Stop background sync for this account
         await _syncManager.StopAccountSyncAsync(accountId);
 
-        // Step 2: Release pooled IMAP connections
+        // Step 2: Release pooled IMAP connections and token refresh lock
         _connectionPool.RemoveAccount(accountId);
+        MailConnectionHelper.RemoveTokenRefreshLock(accountId);
 
         // Step 3: Clean up downloaded attachment files from disk
         var attachmentPaths = await _dbContext.Messages

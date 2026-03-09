@@ -41,7 +41,15 @@ Authorization Code + PKCE flow.
 - `RefreshTokenAsync(provider, encryptedRefreshToken)` — refresh expired tokens (60s grace period)
 - **PKCE**: 128-char random code_verifier, S256 code_challenge (`Base64Url(SHA256(verifier))`)
 - **Security**: Tokens encrypted before return/storage
+- **invalid_grant detection**: When a token exchange or refresh returns `invalid_grant` (token revoked/expired), `OAuthService` throws `OAuthReauthenticationRequiredException` instead of a generic `HttpRequestException`. Callers (e.g., `SyncManager`) catch this to stop sync gracefully and signal the user to re-authenticate
 - **Interface**: `IOAuthService`
+
+### `OAuthReauthenticationRequiredException.cs`
+
+Custom exception thrown when OAuth token refresh fails with `invalid_grant`. Signals that the refresh token is revoked or expired and the user must complete a full re-authorization flow.
+
+- Thrown by `OAuthService` in `HandleTokenResponse` when response body contains `invalid_grant`
+- Caught by `SyncManager.AccountSyncLoopAsync` to stop sync without retrying (non-transient auth failure)
 
 ---
 

@@ -24,6 +24,8 @@
 - **RedirectionEndpoint 因提供商而异**：部分提供商（Yahoo/AOL）需要固定 redirect URI，不能用动态端口 → 用 `redirectionEndpoint` 字段覆盖
 - **RefreshToken 刷新后旧 token 立即失效**：刷新后必须立即持久化新 token 到数据库（`PersistRefreshedTokenAsync`），否则下次启动会用过期 token
 - **令牌刷新宽限期**：令牌过期前 60 秒就触发刷新（`TokenRefreshGracePeriod`），避免请求时恰好过期
+- **令牌刷新并发保护**：IMAP 和 SMTP 可能同时刷新同一账户 token，Google 等提供商会使旧 refresh token 失效。`MailConnectionHelper` 使用 per-account `SemaphoreSlim` + double-check pattern 防止并发刷新。删除账户时必须调用 `RemoveTokenRefreshLock` 清理信号量
+- **invalid_grant 不可重试**：`OAuthService` 检测 `invalid_grant` 后抛出 `OAuthReauthenticationRequiredException`，`SyncManager` 捕获后直接 break 退出同步循环（不进入重连退避），用户必须重新授权
 
 ## WPF / UI
 
@@ -36,7 +38,11 @@
 
 - **MX 域名提取须处理 ccSLD**：`co.uk`、`com.au` 等 country-code second-level domain 需要取 3 级域名（如 `yahoo.co.uk`），否则会提取到无意义的 `co.uk`。参见 `TwoLevelTlds` HashSet
 - **nslookup 必须有超时**：使用 `CancellationTokenSource.CreateLinkedTokenSource` + `CancelAfter(10s)`，超时后 `Kill()` 进程
-- **删除账户须清理运行时资源**：先停后台同步（`StopAccountSyncAsync`）、释放连接池（`RemoveAccount`）、删磁盘附件，最后才删数据库记录
+- **删除账户须清理运行时资源**：先停后台同步（`StopAccountSyncAsync`）、释放连接池（`RemoveAccount`）、清理 token 刷新锁（`RemoveTokenRefreshLock`）、删磁盘附件，最后才删数据库记录
+- **更新账户须重启同步**：`AccountService.UpdateAccountAsync` 校验 host/port 后，若账户正在同步则自动 stop → remove pool → start，否则 SyncManager 继续用旧配置连接
+- **IMAP IDLE 不是所有服务器都支持**：进入监视循环前必须检查 `ImapCapabilities.Idle`，不支持时降级为 2 分钟轮询 + `NoOpAsync`。即使宣称支持，服务器也可能以 BAD/NO 拒绝 IDLE 命令，`IdleWaitAsync` 捕获 `ImapCommandException` 并降级为当次轮询
+- **连接池需定时清理**：`ImapConnectionPool` 使用 `Timer`（5 分钟）后台清理断开的僵尸连接。NAT/移动网络可能静默断开 TCP 而 `IsConnected` 仍返回 true
+- **AutoDiscovery 并行请求须取消剩余**：Level 1-3 并行发起后，首个成功结果通过 `CancellationTokenSource.CancelAsync()` 取消其他正在进行的 HTTP 请求，避免浪费资源
 
 ## 架构约定
 
