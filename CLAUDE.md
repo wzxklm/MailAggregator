@@ -1,91 +1,33 @@
-# 1. Development Environment
+# 1. Environment
 
-Running inside a DevContainer (Ubuntu 22.04, CUDA 12.4). See `.devcontainer/Dockerfile` and `docker-compose.yml` for details.
+DevContainer (Ubuntu 22.04 + CUDA 12.4), manually built and ready to use.
 
-# 2. Project Structure
+# 2. Project Documentation
 
-```
-/workspace/
-├── MailAggregator.sln                  # Solution file (3 projects)
-├── CLAUDE.md
-├── .devcontainer/                      # DevContainer (Ubuntu 22.04 + .NET 8 + CUDA 12.4)
-├── .github/workflows/build.yml        # CI/CD (tag-triggered release)
-├── docs/                              # requirements.md, architecture.md, tasks.md
-└── src/
-    ├── MailAggregator.Core/            # net8.0, cross-platform business logic
-    │   ├── Models/                     # Account, EmailMessage, MailFolder, ServerConfiguration, etc.
-    │   ├── Data/                       # MailAggregatorDbContext, DatabaseInitializer (EF Core SQLite)
-    │   └── Services/
-    │       ├── Auth/                   # CredentialEncryptionService (AES-256-GCM), OAuthService (PKCE), PasswordAuthService
-    │       ├── Discovery/             # AutoDiscoveryService (5-level fallback)
-    │       ├── Mail/                  # MailConnectionHelper, ImapConnectionPool, EmailSyncService, EmailSendService
-    │       ├── AccountManagement/     # AccountService (CRUD + validation)
-    │       └── Sync/                  # SyncManager (IMAP IDLE, exponential backoff)
-    │
-    ├── MailAggregator.Desktop/         # net8.0-windows, WPF UI (MVVM)
-    │   ├── Views/                     # MainWindow, AddAccountWindow, AccountListWindow, ComposeWindow
-    │   ├── ViewModels/                # MainViewModel, AddAccountViewModel, AccountListViewModel, ComposeViewModel
-    │   ├── Converters/                # BoolToVisibility, BoolToFontWeight, NullToVisibility, FileSize
-    │   ├── Resources/Styles.xaml      # App-level styles and converters
-    │   ├── App.xaml / App.xaml.cs     # DI container setup, entry point
-    │   └── MailAggregator.Desktop.csproj
-    │
-    └── MailAggregator.Tests/           # net8.0, xUnit + Moq + FluentAssertions (163 tests)
-        ├── Data/                      # DbContext tests
-        └── Services/                  # Mirror of Core/Services: Auth, Discovery, Mail, AccountManagement, Sync
-```
+Documentation directory: `docs-for-ai/`
+- `index.md` — project index: overview, directory tree, architecture diagram, chapter index, known issues
+- `pitfalls.md` — project-specific pitfalls and coding conventions
+- `chapters/` — detailed documentation (read on-demand by topic):
+  - `core-data.md` — models, EF Core DbContext, data access
+  - `auth.md` — credential encryption, password/OAuth auth, security architecture
+  - `mail.md` — discovery, connection, sync, send, account management, SyncManager, concurrency
+  - `desktop.md` — WPF UI layer, ViewModels, views, styles, DI registrations
+  - `tests.md` — test structure, file list, test patterns
+  - `workflows.md` — end-to-end workflow diagrams
+- `auth-methods-comparison.md` — OAuth implementation audit
+- `thunderbird-comparison.md` — security audit
 
-# 3. Project Documentation
+# 3. CI/CD
 
-- Requirements: docs/requirements.md
-- Architecture: docs/architecture.md
-- Task Breakdown: docs/tasks.md (AI-oriented, tasks ordered by dependencies)
-
-# 4. Development Progress
-
-- Current phase: Phase 6 (CI/CD) — Complete
-- Completed: Phase 0 — .NET 8 SDK, solution skeleton, NuGet dependencies, directory structure; Phase 1 — Data models, EF Core SQLite DbContext, AES-256-GCM credential encryption; Phase 2 — AutoDiscovery service (5-level fallback), OAuth PKCE service, Password auth service; Phase 3 — IMAP/SMTP connection management (MailConnectionHelper shared logic), EmailSyncService (folder sync, initial/incremental sync, flags, attachments, move, delete), EmailSendService (compose, reply, reply-all, forward); Phase 4 — AccountService (add/edit/delete/list accounts, AutoDiscovery+auth integration, connection validation), SyncManager (per-account IMAP IDLE background sync, exponential backoff reconnection, NewEmailsReceived event); Phase 5 — WPF UI layer (DI container, three-pane MainWindow, account wizard, inbox/unified inbox, compose/reply/forward, WebView2 email preview, toast notifications); Phase 6 — GitHub Actions CI/CD (tag-triggered build, test, publish win-x64 self-contained, GitHub Release upload)
-- In progress: All phases complete
-- Latest release: v1.0.7
-
-# 5. Environment Status
-
-- OS: Ubuntu 22.04 (x86_64, DevContainer)
-- Git: 2.34.1
-- Node.js: 22.x
-- Python: 3.x (system)
-- .NET SDK: 8.0.418
-- NuGet packages: Configured (MailKit, EF Core SQLite, Serilog, CommunityToolkit.Mvvm, etc.)
-- Project buildable: Yes (Core + Tests on Linux; Desktop is net8.0-windows, requires EnableWindowsTargeting on Linux)
-- Tests passing: 163/163
-
-# 6. Coding Conventions
-
-- Core project TargetFramework: `net8.0` (cross-platform, buildable and testable on Linux)
-- Desktop project TargetFramework: `net8.0-windows` (Windows only, cannot build on Linux)
-- Use `async/await` for async methods, never create threads manually
-- Interface naming: `I` prefix (e.g. `IEmailSyncService`)
-- Sensitive data (passwords, tokens) must be encrypted before storage, never store in plaintext
-- Use Serilog for logging, log all key operations (connections, sync, errors)
-- When MailKit's `MailFolder` conflicts with `Models.MailFolder`, use `using LocalMailFolder = MailAggregator.Core.Models.MailFolder` alias
-- When `Services.AccountManagement` namespace causes `Account` model conflicts, use `using LocalAccount = MailAggregator.Core.Models.Account` alias
-- Shared connection logic (auth, proxy, encryption mapping) goes in `MailConnectionHelper`, not duplicated per protocol
-- WPF converters and styles go in `Resources/Styles.xaml` (app-level), not per-window
-- ViewModels subscribing to singleton events must implement `IDisposable` and unsubscribe
-- Use `ToListAsync()` for EF Core queries, never `Task.Run(() => query.ToList())` (DbContext is not thread-safe)
-- Desktop project requires `UseWindowsForms=true` for NotifyIcon (toast notifications)
-
-# 7. CI/CD
-
-- CI/CD is tag-triggered: only `v*` tags (e.g. `v1.0.4`) trigger the GitHub Actions workflow
+- CI/CD is tag-triggered: only `v*` tags (e.g. `v1.0.7`) trigger the GitHub Actions workflow
 - To release: `git tag v<version> && git push origin v<version>`
 - Workflow: `.github/workflows/build.yml` — builds on `windows-latest`, runs tests, publishes `win-x64` self-contained, uploads to GitHub Releases
 - Regular `git push` to `main` does NOT trigger CI/CD
 
-# 8. AI Workflow Rules
+# 4. AI Workflow Rules
 
-- Follow the phase order defined in docs/tasks.md
-- Phases marked [parallel] can use subagents for concurrent development; [sequential] phases must run in order
-- Run `/simplify` after completing each task for code quality review
-- Run `/security-review` after each git commit
-- Update "Development Progress" and "Environment Status" sections in this file after each phase
+- Before starting any task, read `docs-for-ai/index.md` and `docs-for-ai/pitfalls.md`, then read only the relevant chapter(s) based on the task
+- After completing any task, execute the following post-task workflow in order:
+  1. **Code review**: Run `/simplify` to simplify code and check quality (runs automatically via subagent)
+  2. **Doc sync**: Launch a subagent to run `git diff HEAD` (or `git diff` for unstaged changes), then update the relevant docs accordingly — `index.md` (directory tree, known issues), affected chapter files, and `pitfalls.md`
+  3. **Pitfall review**: Back in the main session, review the entire task for any pitfalls or new conventions encountered, and update `docs-for-ai/pitfalls.md` under the appropriate module section
