@@ -1,33 +1,28 @@
-using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using DnsClient;
+using DnsClient.Protocol;
 using MailAggregator.Core.Models;
 using Serilog;
 
 namespace MailAggregator.Core.Services.Discovery;
 
 /// <summary>
-/// Discovers IMAP/SMTP server configuration using a 5-level fallback:
+/// Discovers IMAP/SMTP server configuration using a 6-level fallback:
 /// 1. autoconfig.{domain}/mail/config-v1.1.xml
 /// 2. {domain}/.well-known/autoconfig/mail/config-v1.1.xml
 /// 3. Thunderbird ISPDB (autoconfig.thunderbird.net)
 /// 4. MX record DNS lookup, then retry levels 1-3 with MX domain
-/// 5. Return null (UI will guide manual config)
+/// 5. RFC 6186 SRV records (_imaps._tcp, _submission._tcp)
+/// 6. Return null (UI will guide manual config)
 /// </summary>
 public class AutoDiscoveryService : IAutoDiscoveryService
 {
     private readonly HttpClient _httpClient;
+    private readonly ILookupClient _dnsClient;
     private readonly ILogger _logger;
 
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(10);
-    private static readonly TimeSpan NslookupTimeout = TimeSpan.FromSeconds(10);
-
-    /// <summary>
-    /// Regex for validating domain names (only alphanumeric, hyphens, and dots).
-    /// Prevents command injection when passing domains to nslookup.
-    /// </summary>
-    private static readonly Regex ValidDomainRegex = new(
-        @"^[a-zA-Z0-9]([a-zA-Z0-9\-\.]*[a-zA-Z0-9])?$",
-        RegexOptions.Compiled);
+    private static readonly TimeSpan DnsTimeout = TimeSpan.FromSeconds(10);
 
     /// <summary>
     /// Common country-code second-level domains (ccSLDs) where the base domain
@@ -45,8 +40,14 @@ public class AutoDiscoveryService : IAutoDiscoveryService
     };
 
     public AutoDiscoveryService(HttpClient httpClient, ILogger logger)
+        : this(httpClient, new LookupClient(new LookupClientOptions { Timeout = DnsTimeout }), logger)
+    {
+    }
+
+    public AutoDiscoveryService(HttpClient httpClient, ILookupClient dnsClient, ILogger logger)
     {
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+        _dnsClient = dnsClient ?? throw new ArgumentNullException(nameof(dnsClient));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -90,7 +91,13 @@ public class AutoDiscoveryService : IAutoDiscoveryService
                 return config;
         }
 
-        // Level 5: Return null
+        // Level 5: RFC 6186 SRV records (_imaps._tcp, _submission._tcp)
+        _logger.Information("Levels 1-4 failed for {Domain}, trying RFC 6186 SRV records", domain);
+        config = await TryDiscoverViaSrvAsync(domain, cancellationToken);
+        if (config != null)
+            return config;
+
+        // Level 6: Return null
         _logger.Information("AutoDiscovery failed for {EmailAddress}: all levels exhausted", emailAddress);
         return null;
     }
@@ -256,56 +263,32 @@ public class AutoDiscoveryService : IAutoDiscoveryService
     }
 
     /// <summary>
-    /// Resolves the MX record for a domain and extracts the base domain.
+    /// Resolves the MX record for a domain and extracts the base domain using DnsClient.NET.
     /// Protected virtual to allow mocking in tests.
     /// </summary>
     protected internal virtual async Task<string?> ResolveMxDomainAsync(string domain, CancellationToken cancellationToken)
     {
         try
         {
-            // Validate domain to prevent command injection
-            if (!ValidDomainRegex.IsMatch(domain))
-            {
-                _logger.Warning("Invalid domain name, skipping MX lookup: {Domain}", domain);
-                return null;
-            }
-
             _logger.Debug("Resolving MX record for {Domain}", domain);
 
-            var startInfo = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = "nslookup",
-                Arguments = $"-type=MX {domain}",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
+            var result = await _dnsClient.QueryAsync(domain, QueryType.MX, cancellationToken: cancellationToken);
 
-            using var process = System.Diagnostics.Process.Start(startInfo);
-            if (process == null)
+            var mxRecord = result.Answers.MxRecords()
+                .OrderBy(mx => mx.Preference)
+                .FirstOrDefault();
+
+            if (mxRecord == null)
             {
-                _logger.Warning("Failed to start nslookup process");
+                _logger.Debug("No MX record found for {Domain}", domain);
                 return null;
             }
 
-            // Use a combined timeout + caller cancellation token
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeoutCts.CancelAfter(NslookupTimeout);
+            var mxHost = mxRecord.Exchange.Value.TrimEnd('.');
+            _logger.Debug("MX record for {Domain}: {MxHost} (preference {Preference})",
+                domain, mxHost, mxRecord.Preference);
 
-            try
-            {
-                var output = await process.StandardOutput.ReadToEndAsync(timeoutCts.Token);
-                await process.WaitForExitAsync(timeoutCts.Token);
-                return ParseMxFromNslookup(output);
-            }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                // Timeout (not caller cancellation) — kill the hung process
-                _logger.Warning("MX lookup timed out for {Domain}, killing nslookup process", domain);
-                try { process.Kill(); } catch { /* best effort */ }
-                return null;
-            }
+            return ExtractBaseDomain(mxHost);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -318,55 +301,111 @@ public class AutoDiscoveryService : IAutoDiscoveryService
         }
     }
 
-    internal static string? ParseMxFromNslookup(string nslookupOutput)
+    /// <summary>
+    /// Attempts to discover server configuration via RFC 6186 SRV records.
+    /// Queries _imaps._tcp.{domain} for IMAP and _submission._tcp.{domain} for SMTP.
+    /// </summary>
+    protected internal virtual async Task<ServerConfiguration?> TryDiscoverViaSrvAsync(string domain, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(nslookupOutput))
-            return null;
-
-        // nslookup output lines like: "gmail.com	mail exchanger = 10 alt1.gmail-smtp-in.l.google.com."
-        // or "gmail.com	MX preference = 10, mail exchanger = alt1.gmail-smtp-in.l.google.com"
-        foreach (var line in nslookupOutput.Split('\n'))
+        try
         {
-            var trimmed = line.Trim();
-            var exchangerIdx = trimmed.IndexOf("mail exchanger", StringComparison.OrdinalIgnoreCase);
-            if (exchangerIdx < 0)
-                continue;
+            // Start SMTP query in parallel with IMAP queries (independent)
+            var smtpTask = TrySrvQueryAsync($"_submission._tcp.{domain}", cancellationToken);
 
-            // Find the '=' after "mail exchanger"
-            var equalsIdx = trimmed.IndexOf('=', exchangerIdx);
-            if (equalsIdx < 0)
-                continue;
+            // Query IMAP SRV: try _imaps._tcp (implicit TLS) first, then _imap._tcp (STARTTLS)
+            var imapResult = await TrySrvQueryAsync($"_imaps._tcp.{domain}", cancellationToken);
+            var imapEncryption = ConnectionEncryptionType.Ssl;
 
-            var afterEquals = trimmed[(equalsIdx + 1)..].Trim();
-
-            // The MX host might be preceded by a priority number (e.g., "10 mail.example.com.")
-            var parts = afterEquals.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            var mxHost = parts.Length switch
+            if (imapResult == null)
             {
-                0 => null,
-                1 => parts[0],
-                _ => parts[^1] // Last part is the hostname
+                imapResult = await TrySrvQueryAsync($"_imap._tcp.{domain}", cancellationToken);
+                imapEncryption = ConnectionEncryptionType.StartTls;
+            }
+
+            if (imapResult == null)
+            {
+                _logger.Debug("No IMAP SRV records found for {Domain}", domain);
+                return null;
+            }
+
+            var smtpResult = await smtpTask;
+
+            var config = new ServerConfiguration
+            {
+                ImapHost = imapResult.Value.Host,
+                ImapPort = imapResult.Value.Port,
+                ImapEncryption = imapEncryption,
+                SmtpHost = smtpResult?.Host ?? string.Empty,
+                SmtpPort = smtpResult?.Port ?? 587,
+                SmtpEncryption = smtpResult != null ? ConnectionEncryptionType.StartTls : ConnectionEncryptionType.None
             };
 
-            if (string.IsNullOrWhiteSpace(mxHost))
-                continue;
+            _logger.Information("AutoDiscovery succeeded via SRV records: IMAP={ImapHost}:{ImapPort}, SMTP={SmtpHost}:{SmtpPort}",
+                config.ImapHost, config.ImapPort, config.SmtpHost, config.SmtpPort);
 
-            // Remove trailing dot
-            mxHost = mxHost.TrimEnd('.');
+            return config;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.Debug(ex, "SRV record discovery failed for {Domain}", domain);
+            return null;
+        }
+    }
 
-            // Extract base domain from MX hostname (e.g., "alt1.gmail-smtp-in.l.google.com" → "google.com")
-            // Handle country-code second-level domains (e.g., "mx.mail.yahoo.co.uk" → "yahoo.co.uk")
-            var mxParts = mxHost.Split('.');
-            if (mxParts.Length >= 3)
-            {
-                var twoLevelTld = $"{mxParts[^2]}.{mxParts[^1]}";
-                if (TwoLevelTlds.Contains(twoLevelTld))
-                    return $"{mxParts[^3]}.{mxParts[^2]}.{mxParts[^1]}";
-            }
-            if (mxParts.Length >= 2)
-            {
-                return $"{mxParts[^2]}.{mxParts[^1]}";
-            }
+    private async Task<(string Host, int Port)?> TrySrvQueryAsync(string srvName, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await _dnsClient.QueryAsync(srvName, QueryType.SRV, cancellationToken: cancellationToken);
+
+            var srvRecord = result.Answers.SrvRecords()
+                .OrderBy(s => s.Priority)
+                .ThenByDescending(s => s.Weight)
+                .FirstOrDefault();
+
+            if (srvRecord == null)
+                return null;
+
+            // RFC 6186 §3: a target of "." means the service is explicitly not available
+            var host = srvRecord.Target.Value.TrimEnd('.');
+            if (string.IsNullOrEmpty(host) || host == ".")
+                return null;
+
+            _logger.Debug("SRV {Name}: {Host}:{Port} (priority={Priority}, weight={Weight})",
+                srvName, host, srvRecord.Port, srvRecord.Priority, srvRecord.Weight);
+
+            return (host, srvRecord.Port);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Extracts the base domain from an MX hostname, handling ccSLDs.
+    /// e.g., "alt1.gmail-smtp-in.l.google.com" → "google.com"
+    /// e.g., "mx.mail.yahoo.co.uk" → "yahoo.co.uk"
+    /// </summary>
+    internal static string? ExtractBaseDomain(string mxHost)
+    {
+        if (string.IsNullOrWhiteSpace(mxHost))
+            return null;
+
+        var parts = mxHost.Split('.');
+        if (parts.Length >= 3)
+        {
+            var twoLevelTld = $"{parts[^2]}.{parts[^1]}";
+            if (TwoLevelTlds.Contains(twoLevelTld))
+                return $"{parts[^3]}.{parts[^2]}.{parts[^1]}";
+        }
+        if (parts.Length >= 2)
+        {
+            return $"{parts[^2]}.{parts[^1]}";
         }
 
         return null;

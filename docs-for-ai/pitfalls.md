@@ -37,11 +37,16 @@
 ## 邮件发现 & 同步
 
 - **MX 域名提取须处理 ccSLD**：`co.uk`、`com.au` 等 country-code second-level domain 需要取 3 级域名（如 `yahoo.co.uk`），否则会提取到无意义的 `co.uk`。参见 `TwoLevelTlds` HashSet
-- **nslookup 必须有超时**：使用 `CancellationTokenSource.CreateLinkedTokenSource` + `CancelAfter(10s)`，超时后 `Kill()` 进程
+- **DNS 查询使用 DnsClient.NET**：不再通过 `nslookup` 进程解析 MX/SRV 记录，改用 `ILookupClient`（DnsClient 库）。构造函数接受 `ILookupClient` 便于测试注入。DNS 超时通过 `LookupClientOptions.Timeout` 配置（10s）
+- **RFC 6186 SRV 记录发现（Level 5）**：自动发现 fallback 链新增 SRV 查询（`_imaps._tcp`→`_imap._tcp`→`_submission._tcp`），SMTP SRV 查询与 IMAP 并行执行以减少延迟
 - **删除账户须清理运行时资源**：先停后台同步（`StopAccountSyncAsync`）、释放连接池（`RemoveAccount`）、清理 token 刷新锁（`RemoveTokenRefreshLock`）、删磁盘附件，最后才删数据库记录
 - **更新账户须重启同步**：`AccountService.UpdateAccountAsync` 校验 host/port 后，若账户正在同步则自动 stop → remove pool → start，否则 SyncManager 继续用旧配置连接
 - **IMAP IDLE 不是所有服务器都支持**：进入监视循环前必须检查 `ImapCapabilities.Idle`，不支持时降级为 2 分钟轮询 + `NoOpAsync`。即使宣称支持，服务器也可能以 BAD/NO 拒绝 IDLE 命令，`IdleWaitAsync` 捕获 `ImapCommandException` 并降级为当次轮询
+- **合并 IMAP 操作减少往返**：`SyncFlagsAndDetectDeletionsAsync` 用一次 FETCH 同时完成标志同步和删除检测（服务器仅返回仍存在的 UID，缺失的即为已删除）。避免分别查询浪费带宽
 - **连接池需定时清理**：`ImapConnectionPool` 使用 `Timer`（5 分钟）后台清理断开的僵尸连接。NAT/移动网络可能静默断开 TCP 而 `IsConnected` 仍返回 true
+- **连接池大小原子跟踪**：`_poolCounts` ConcurrentDictionary 通过 `AddOrUpdate` 原子递增/递减，防止并发入池导致超限
+- **指数退避须含抖动**：`CalculateBackoffDelay` 在退避延迟上添加 ±25% 随机抖动（`JitterFactor=0.25`），防止多账户同时重连（thundering herd）
+- **网络感知重连**：`SyncManager` 订阅 `NetworkChange.NetworkAvailabilityChanged`，网络断开时暂停退避循环（`ManualResetEventSlim`），恢复时立即重连（重置 `reconnectAttempt=0`）。不要用冗余的 volatile bool，直接用 `_networkAvailable.IsSet`
 - **AutoDiscovery 并行请求须取消剩余**：Level 1-3 并行发起后，首个成功结果通过 `CancellationTokenSource.CancelAsync()` 取消其他正在进行的 HTTP 请求，避免浪费资源
 
 ## 架构约定
@@ -56,7 +61,7 @@
 - **加密密钥通过 DPAPI 保护**：生产环境用 `DpapiKeyProtector`（Windows CurrentUser 作用域），开发/测试环境用 `DevKeyProtector`（直通，不安全）
 - **WebView2 安全配置**：禁用脚本、禁用右键菜单、阻止外部导航和资源加载（防追踪）
 - **OAuth state 参数**：必须用 `RandomNumberGenerator` 生成随机 state 并在回调中验证，防 CSRF（RFC 6749 §10.12）
-- **外部命令注入防护**：传给 `nslookup` 等外部进程的域名必须用 `ValidDomainRegex` 校验（仅允许字母数字、连字符、点号）
+- **不使用外部进程做 DNS 查询**：已从 nslookup 进程迁移到 DnsClient.NET 库，消除了命令注入风险和 `ValidDomainRegex` 依赖
 - **HttpListener 资源清理**：`_pendingListeners` 中的 HttpListener 必须在新 OAuth 流开始时清理，防止abandoned flow 导致端口泄漏
 - **端口绑定 TOCTOU**：发现空闲端口后必须立即绑定（`StartListenerOnFreePort` 带重试），不能先查后绑
 

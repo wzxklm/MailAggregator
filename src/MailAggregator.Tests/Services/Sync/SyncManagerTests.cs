@@ -411,51 +411,61 @@ public class SyncManagerTests : IDisposable
     // ==========================================
 
     [Fact]
-    public void CalculateBackoffDelay_Attempt0_ReturnsInitialDelay()
+    public void CalculateBackoffDelay_Attempt0_ReturnsNearInitialDelay()
     {
+        // With ±25% jitter, attempt 0 (base 1s) should be in [0.75s, 1.25s]
         var delay = SyncManager.CalculateBackoffDelay(0);
-        delay.Should().Be(SyncManager.InitialReconnectDelay);
+        delay.Should().BeGreaterThanOrEqualTo(TimeSpan.FromMilliseconds(750));
+        delay.Should().BeLessThanOrEqualTo(TimeSpan.FromMilliseconds(1250));
     }
 
     [Fact]
-    public void CalculateBackoffDelay_Attempt1_ReturnsDoubleInitial()
+    public void CalculateBackoffDelay_Attempt1_ReturnsNearDoubleInitial()
     {
+        // With ±25% jitter, attempt 1 (base 2s) should be in [1.5s, 2.5s]
         var delay = SyncManager.CalculateBackoffDelay(1);
-        delay.Should().Be(TimeSpan.FromSeconds(2));
+        delay.Should().BeGreaterThanOrEqualTo(TimeSpan.FromMilliseconds(1500));
+        delay.Should().BeLessThanOrEqualTo(TimeSpan.FromMilliseconds(2500));
     }
 
     [Fact]
-    public void CalculateBackoffDelay_Attempt2_ReturnsFourTimesInitial()
+    public void CalculateBackoffDelay_Attempt2_ReturnsNearFourTimesInitial()
     {
+        // With ±25% jitter, attempt 2 (base 4s) should be in [3s, 5s]
         var delay = SyncManager.CalculateBackoffDelay(2);
-        delay.Should().Be(TimeSpan.FromSeconds(4));
+        delay.Should().BeGreaterThanOrEqualTo(TimeSpan.FromMilliseconds(3000));
+        delay.Should().BeLessThanOrEqualTo(TimeSpan.FromMilliseconds(5000));
     }
 
     [Fact]
     public void CalculateBackoffDelay_ExponentialProgression()
     {
-        // 1s, 2s, 4s, 8s, 16s, 32s, 60s (capped)
-        SyncManager.CalculateBackoffDelay(0).Should().Be(TimeSpan.FromSeconds(1));
-        SyncManager.CalculateBackoffDelay(1).Should().Be(TimeSpan.FromSeconds(2));
-        SyncManager.CalculateBackoffDelay(2).Should().Be(TimeSpan.FromSeconds(4));
-        SyncManager.CalculateBackoffDelay(3).Should().Be(TimeSpan.FromSeconds(8));
-        SyncManager.CalculateBackoffDelay(4).Should().Be(TimeSpan.FromSeconds(16));
-        SyncManager.CalculateBackoffDelay(5).Should().Be(TimeSpan.FromSeconds(32));
+        // With jitter, verify that the general exponential trend holds
+        var d0 = SyncManager.CalculateBackoffDelay(0);
+        var d1 = SyncManager.CalculateBackoffDelay(1);
+        var d4 = SyncManager.CalculateBackoffDelay(4);
+
+        // d1 base (2s) > d0 base (1s), accounting for worst-case jitter
+        d1.Should().BeGreaterThanOrEqualTo(TimeSpan.FromMilliseconds(1500));
+        // d4 base (16s) should be significantly higher than d0
+        d4.Should().BeGreaterThanOrEqualTo(TimeSpan.FromMilliseconds(12000));
     }
 
     [Fact]
     public void CalculateBackoffDelay_CapsAtMaxDelay()
     {
-        // Attempt 6: 2^6 = 64s -> capped at 60s
-        var delay = SyncManager.CalculateBackoffDelay(6);
-        delay.Should().Be(SyncManager.MaxReconnectDelay);
+        // Attempt 10: 2^10 = 1024s -> capped at 300s, then jitter ±25% => [225s, 375s]
+        var delay = SyncManager.CalculateBackoffDelay(10);
+        delay.Should().BeLessThanOrEqualTo(SyncManager.MaxReconnectDelay * 1.25);
+        delay.Should().BeGreaterThanOrEqualTo(SyncManager.MaxReconnectDelay * 0.75);
     }
 
     [Fact]
     public void CalculateBackoffDelay_VeryHighAttempt_CapsAtMaxDelay()
     {
         var delay = SyncManager.CalculateBackoffDelay(100);
-        delay.Should().Be(SyncManager.MaxReconnectDelay);
+        delay.Should().BeLessThanOrEqualTo(SyncManager.MaxReconnectDelay * 1.25);
+        delay.Should().BeGreaterThanOrEqualTo(SyncManager.MaxReconnectDelay * 0.75);
     }
 
     [Fact]
@@ -463,6 +473,14 @@ public class SyncManagerTests : IDisposable
     {
         var act = () => SyncManager.CalculateBackoffDelay(-1);
         act.Should().Throw<ArgumentOutOfRangeException>();
+    }
+
+    [Fact]
+    public void CalculateBackoffDelay_JitterProducesDifferentValues()
+    {
+        // Run multiple times and verify we get at least some variation (jitter is working)
+        var delays = Enumerable.Range(0, 20).Select(_ => SyncManager.CalculateBackoffDelay(5)).ToList();
+        delays.Distinct().Count().Should().BeGreaterThan(1, "jitter should produce varying delays");
     }
 
     // ==========================================
@@ -526,8 +544,8 @@ public class SyncManagerTests : IDisposable
     }
 
     [Fact]
-    public void MaxReconnectDelay_IsSixtySeconds()
+    public void MaxReconnectDelay_Is300Seconds()
     {
-        SyncManager.MaxReconnectDelay.Should().Be(TimeSpan.FromSeconds(60));
+        SyncManager.MaxReconnectDelay.Should().Be(TimeSpan.FromSeconds(300));
     }
 }

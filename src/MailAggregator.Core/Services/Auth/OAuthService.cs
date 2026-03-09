@@ -263,7 +263,7 @@ public class OAuthService : IOAuthService
             throw new HttpRequestException($"{operationName} failed with status {response.StatusCode}: {responseBody}");
         }
 
-        return ParseTokenResponse(responseBody);
+        return ParseTokenResponse(responseBody, provider);
     }
 
     /// <summary>
@@ -361,7 +361,7 @@ public class OAuthService : IOAuthService
         throw new InvalidOperationException("Could not find a free port for OAuth callback listener.");
     }
 
-    private OAuthTokenResult ParseTokenResponse(string responseBody)
+    private OAuthTokenResult ParseTokenResponse(string responseBody, OAuthProviderConfig provider)
     {
         using var doc = JsonDocument.Parse(responseBody);
         var root = doc.RootElement;
@@ -377,14 +377,41 @@ public class OAuthService : IOAuthService
             ? expiresElement.GetInt32()
             : 3600; // Default to 1 hour
 
+        // Parse granted scopes from the response (space-delimited per RFC 6749 §3.3)
+        var grantedScopes = Array.Empty<string>();
+        if (root.TryGetProperty("scope", out var scopeElement))
+        {
+            var scopeStr = scopeElement.GetString();
+            if (!string.IsNullOrWhiteSpace(scopeStr))
+                grantedScopes = scopeStr.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        }
+
+        // Warn if the server returned fewer scopes than requested
+        // (Microsoft commonly omits offline_access from the response)
+        if (grantedScopes.Length > 0)
+        {
+            var requestedScopes = new HashSet<string>(provider.Scopes, StringComparer.OrdinalIgnoreCase);
+            var missing = requestedScopes.Except(grantedScopes, StringComparer.OrdinalIgnoreCase).ToList();
+            if (missing.Count > 0)
+            {
+                _logger.Warning("OAuth scope reduced for {Provider}: requested [{Requested}] but granted [{Granted}]. Missing: [{Missing}]",
+                    provider.Name,
+                    string.Join(", ", provider.Scopes),
+                    string.Join(", ", grantedScopes),
+                    string.Join(", ", missing));
+            }
+        }
+
         var result = new OAuthTokenResult
         {
             AccessToken = _encryptionService.Encrypt(accessToken),
             RefreshToken = refreshToken != null ? _encryptionService.Encrypt(refreshToken) : null,
-            ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(expiresIn)
+            ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(expiresIn),
+            GrantedScopes = grantedScopes
         };
 
-        _logger.Information("Token response parsed successfully, expires at {ExpiresAt}", result.ExpiresAt);
+        _logger.Information("Token response parsed successfully, expires at {ExpiresAt}, scopes=[{Scopes}]",
+            result.ExpiresAt, string.Join(", ", grantedScopes));
         return result;
     }
 

@@ -28,6 +28,7 @@ public class EmailMessage
 
     // Status
     public bool IsRead { get; set; }
+    public bool IsFlagged { get; set; }
     public bool HasAttachments { get; set; }
 
     public DateTimeOffset CachedAt { get; set; }

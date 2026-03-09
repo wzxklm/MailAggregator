@@ -117,19 +117,19 @@
 | # | 模块 | 问题 |
 |---|------|------|
 | 21 | Auth | OAuth 凭据借用 Thunderbird 的 client_id，可能被 Google/Microsoft 撤销 |
-| 22 | Auth | 不检查服务器返回的 scope 是否缩减（Microsoft 常不返回 `offline_access`） |
+| 22 | Auth | ~~不检查服务器返回的 scope 是否缩减（Microsoft 常不返回 `offline_access`）~~ ✅ |
 | 23 | Auth | ~~PKCE 强制全局启用~~ ✅ 已修复：`OAuthProviderConfig.UsePKCE` per-provider 控制 |
-| 24 | Mail | 不同步服务器端标志变更（已读/星标在其他客户端修改后本地不更新） |
+| 24 | Mail | ~~不同步服务器端标志变更（已读/星标在其他客户端修改后本地不更新）~~ ✅ |
 | 25 | Mail | 大附件一次性下载，无分块机制（Thunderbird 有动态 chunk size 调整） |
-| 26 | Mail | 连接池大小检查存在竞态（`ConcurrentQueue.Count` 非原子，可能超限） |
+| 26 | Mail | ~~连接池大小检查存在竞态（`ConcurrentQueue.Count` 非原子，可能超限）~~ ✅ |
 | 27 | Sync | 只监听 Inbox，其他文件夹新消息完全不通知（Thunderbird 有三级队列全文件夹监控） |
-| 28 | Sync | 指数退避缺少抖动（Jitter），多账户同时断线时惊群效应 |
-| 29 | Sync | 不感知网络状态（应监听 `NetworkChange.NetworkAvailabilityChanged`），离线时白白消耗退避循环 |
-| 30 | Sync | 最大退避仅 60s，长时间离线场景浪费电量（建议提升到 300s+） |
-| 31 | Discovery | 不支持 RFC 6186 SRV 记录（`_imaps._tcp`、`_submission._tcp`）和 Exchange AutoDiscover |
-| 32 | Discovery | 应替换 `nslookup` 为 .NET 原生 DNS 库（如 DnsClient.NET） |
-| 33 | AccountMgmt | DbContext tracking 不一致（`GetAll` 用 NoTracking，`GetById` 用 Tracking，混用可能冲突） |
-| 34 | AccountMgmt | OAuth 添加流程非原子性，中途失败留下不可用账户（有 OAuth 标记但无 token） |
+| 28 | Sync | ~~指数退避缺少抖动（Jitter），多账户同时断线时惊群效应~~ ✅ |
+| 29 | Sync | ~~不感知网络状态（应监听 `NetworkChange.NetworkAvailabilityChanged`），离线时白白消耗退避循环~~ ✅ |
+| 30 | Sync | ~~最大退避仅 60s，长时间离线场景浪费电量（建议提升到 300s+）~~ ✅ |
+| 31 | Discovery | ~~不支持 RFC 6186 SRV 记录（`_imaps._tcp`、`_submission._tcp`）~~ ✅（Exchange AutoDiscover 仍未实现） |
+| 32 | Discovery | ~~应替换 `nslookup` 为 .NET 原生 DNS 库（如 DnsClient.NET）~~ ✅ |
+| 33 | AccountMgmt | ~~DbContext tracking 不一致（`GetAll` 用 NoTracking，`GetById` 用 Tracking，混用可能冲突）~~ ✅ |
+| 34 | AccountMgmt | ~~OAuth 添加流程非原子性，中途失败留下不可用账户（有 OAuth 标记但无 token）~~ ✅ |
 
 ---
 
@@ -164,7 +164,7 @@
 
 ### 4. 测试覆盖（全局）
 
-- **179 个单元测试**，覆盖所有核心模块的正向/异常路径
+- **180 个单元测试**，覆盖所有核心模块的正向/异常路径
 - 使用内存 SQLite + Moq + FluentAssertions 框架，运行快、隔离好
 - Thunderbird 主要依赖集成测试（需要模拟 IMAP 服务器），单元覆盖率较低
 
@@ -196,13 +196,13 @@
 |------|---------------|-------------|------|
 | 凭据加密 | AES-256-GCM + DPAPI | LoginManager 默认不加密 | 我们 |
 | 代码简洁性 | ~2360 行 | ~15000+ 行 | 我们 |
-| 测试覆盖 | 179 个单元测试 | 集成测试为主 | 我们 |
+| 测试覆盖 | 180 个单元测试 | 集成测试为主 | 我们 |
 | 异步模型 | async/await | 手动线程管理 | 我们 |
 | OAuth 安全性 | state + PKCE + per-account 并发保护 + invalid_grant 检测 | 内嵌浏览器 + 全局锁 | 持平 |
 | 协议支持深度 | 基础 IMAP/SMTP + IDLE 降级轮询 | CONDSTORE/IDLE 降级/分块下载 | Thunderbird |
-| 服务器发现 | 5 级回退（并行 + HTTP 回退） | 8+ 级回退（并行） + Exchange | Thunderbird |
+| 服务器发现 | 6 级回退（并行 + HTTP 回退 + SRV） | 8+ 级回退（并行） + Exchange | Thunderbird |
 | 多文件夹同步 | 仅 Inbox IDLE | 三级队列全文件夹 | Thunderbird |
 | 资源管理 | 删除时完整清理（sync+pool+files） | 完整清理链 | 持平 |
-| 错误恢复 | 基础指数退避 | 网络感知 + 细粒度错误分类 | Thunderbird |
+| 错误恢复 | 网络感知 + 指数退避 + 抖动 | 网络感知 + 细粒度错误分类 | 持平 |
 
-**核心结论**：我们在**加密安全**、**代码简洁性**和**现代架构**上显著优于 Thunderbird。P0 的 8 项严重问题已全部修复。P1 的 12 项中已修复 9 项（#9 invalid_grant 检测、#10 token 刷新并发保护、#11 token 宽限期、#13 连接池定时清理、#15 IDLE 能力检查、#16 IDLE 拒绝降级、#17 并行发现、#18 HTTP 回退、#19 authentication 解析、#20 账户更新验证+同步重启）。剩余差距在**协议完整性**（CONDSTORE、Exchange AutoDiscover、SRV 记录）和 **SMTP 连接复用**。
+**核心结论**：我们在**加密安全**、**代码简洁性**和**现代架构**上显著优于 Thunderbird。P0 的 8 项严重问题已全部修复。P1 的 12 项中已修复 9 项（#9 invalid_grant 检测、#10 token 刷新并发保护、#11 token 宽限期、#13 连接池定时清理、#15 IDLE 能力检查、#16 IDLE 拒绝降级、#17 并行发现、#18 HTTP 回退、#19 authentication 解析、#20 账户更新验证+同步重启）。P2 的 14 项中已修复 10 项（#22 scope 验证、#24 标志同步、#26 连接池原子计数、#28 退避抖动、#29 网络感知、#30 最大退避300s、#31 SRV 记录、#32 DnsClient.NET、#33 AsNoTracking 一致、#34 事务原子添加）。剩余 P2 差距在 #21 OAuth client_id、#25 大附件分块、#27 多文件夹同步。P1 剩余差距在**协议完整性**（CONDSTORE）和 **SMTP 连接复用**。

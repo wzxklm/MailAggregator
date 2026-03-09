@@ -17,6 +17,7 @@ public class ImapConnectionPool : IImapConnectionPool
     internal static readonly TimeSpan CleanupInterval = TimeSpan.FromMinutes(5);
 
     private readonly ConcurrentDictionary<int, ConcurrentQueue<ImapClient>> _pool = new();
+    private readonly ConcurrentDictionary<int, int> _poolCounts = new();
     private readonly IImapConnectionService _connectionService;
     private readonly ILogger _logger;
     private readonly Timer _cleanupTimer;
@@ -39,6 +40,8 @@ public class ImapConnectionPool : IImapConnectionPool
 
         while (queue.TryDequeue(out var client))
         {
+            _poolCounts.AddOrUpdate(account.Id, 0, (_, current) => Math.Max(0, current - 1));
+
             if (client.IsConnected && client.IsAuthenticated)
             {
                 _logger.Debug("Reusing pooled IMAP connection for {Email}", account.EmailAddress);
@@ -63,13 +66,18 @@ public class ImapConnectionPool : IImapConnectionPool
         }
 
         var queue = _pool.GetOrAdd(accountId, _ => new ConcurrentQueue<ImapClient>());
-        // Allow slight over-count rather than using a lock; the Count check is best-effort
-        if (queue.Count < MaxPoolSizePerAccount)
+
+        // Use atomic increment to prevent the ConcurrentQueue.Count TOCTOU race
+        // that could allow more connections than MaxPoolSizePerAccount.
+        var newCount = _poolCounts.AddOrUpdate(accountId, 1, (_, current) => current + 1);
+        if (newCount <= MaxPoolSizePerAccount)
         {
             queue.Enqueue(client);
         }
         else
         {
+            // Over limit — decrement back and dispose
+            _poolCounts.AddOrUpdate(accountId, 0, (_, current) => Math.Max(0, current - 1));
             DisposeClient(client);
         }
     }
@@ -100,6 +108,7 @@ public class ImapConnectionPool : IImapConnectionPool
                 }
                 else
                 {
+                    _poolCounts.AddOrUpdate(accountId, 0, (_, current) => Math.Max(0, current - 1));
                     DisposeClient(client);
                     totalRemoved++;
                 }
@@ -114,6 +123,7 @@ public class ImapConnectionPool : IImapConnectionPool
 
     public void RemoveAccount(int accountId)
     {
+        _poolCounts.TryRemove(accountId, out _);
         if (_pool.TryRemove(accountId, out var queue))
         {
             while (queue.TryDequeue(out var client))

@@ -201,8 +201,8 @@ public class EmailSyncService : IEmailSyncService
             }
         }
 
-        // Detect deleted messages
-        await DetectDeletedMessagesAsync(imapFolder, folder, dbContext, cancellationToken);
+        // Sync flags and detect deletions in a single IMAP roundtrip
+        await SyncFlagsAndDetectDeletionsAsync(imapFolder, folder, dbContext, cancellationToken);
 
         folder.MessageCount = imapFolder.Count;
         folder.UnreadCount = imapFolder.Unread;
@@ -483,6 +483,7 @@ public class EmailSyncService : IEmailSyncService
                 DateSent = envelope.Date ?? DateTimeOffset.MinValue,
                 PreviewText = summary.PreviewText,
                 IsRead = summary.Flags?.HasFlag(MessageFlags.Seen) ?? false,
+                IsFlagged = summary.Flags?.HasFlag(MessageFlags.Flagged) ?? false,
                 HasAttachments = summary.Attachments?.Any() ?? false
             };
 
@@ -503,21 +504,64 @@ public class EmailSyncService : IEmailSyncService
             await SaveChangesSafeAsync(dbContext, cancellationToken);
     }
 
-    private async Task DetectDeletedMessagesAsync(IMailFolder imapFolder, LocalMailFolder localFolder, MailAggregatorDbContext dbContext, CancellationToken cancellationToken)
+    /// <summary>
+    /// Syncs server-side flag changes and detects deleted messages in a single IMAP FETCH.
+    /// UIDs returned by FETCH still exist; local UIDs absent from the response have been deleted.
+    /// </summary>
+    private async Task SyncFlagsAndDetectDeletionsAsync(IMailFolder imapFolder, LocalMailFolder localFolder, MailAggregatorDbContext dbContext, CancellationToken cancellationToken)
     {
-        var allServerUids = await imapFolder.SearchAsync(SearchQuery.All, cancellationToken);
-        var serverUidSet = allServerUids.Select(u => u.Id).ToHashSet();
-
-        var localUids = await dbContext.Messages
+        var localMessages = await dbContext.Messages
             .Where(m => m.FolderId == localFolder.Id)
-            .Select(m => m.Uid)
+            .Select(m => new { m.Id, m.Uid, m.IsRead, m.IsFlagged })
             .ToListAsync(cancellationToken);
 
-        var deletedUids = localUids.Where(uid => !serverUidSet.Contains(uid)).ToList();
+        if (localMessages.Count == 0) return;
 
+        var localUids = localMessages.Select(m => new UniqueId(m.Uid)).ToList();
+
+        // Single IMAP FETCH: server returns only UIDs that still exist
+        var summaries = await imapFolder.FetchAsync(localUids, MessageSummaryItems.UniqueId | MessageSummaryItems.Flags, cancellationToken);
+
+        var serverFlags = summaries.ToDictionary(
+            s => s.UniqueId.Id,
+            s => (IsRead: s.Flags?.HasFlag(MessageFlags.Seen) ?? false,
+                  IsFlagged: s.Flags?.HasFlag(MessageFlags.Flagged) ?? false));
+
+        // Flag sync: update changed flags
+        var updatedCount = 0;
+        var deletedUids = new List<uint>();
+
+        foreach (var local in localMessages)
+        {
+            if (!serverFlags.TryGetValue(local.Uid, out var server))
+            {
+                // UID not in server response = message deleted
+                deletedUids.Add(local.Uid);
+                continue;
+            }
+
+            if (local.IsRead == server.IsRead && local.IsFlagged == server.IsFlagged)
+                continue;
+
+            var entity = new EmailMessage { Id = local.Id, IsRead = server.IsRead, IsFlagged = server.IsFlagged };
+            dbContext.Messages.Attach(entity);
+            if (local.IsRead != server.IsRead)
+                dbContext.Entry(entity).Property(m => m.IsRead).IsModified = true;
+            if (local.IsFlagged != server.IsFlagged)
+                dbContext.Entry(entity).Property(m => m.IsFlagged).IsModified = true;
+
+            updatedCount++;
+        }
+
+        if (updatedCount > 0)
+        {
+            await SaveChangesSafeAsync(dbContext, cancellationToken);
+            _logger.Information("Synced flags for {Count} message(s) in {Folder}", updatedCount, localFolder.FullName);
+        }
+
+        // Deletion detection: remove local messages no longer on server
         if (deletedUids.Count > 0)
         {
-            // Use ExecuteDeleteAsync to delete in a single SQL statement without loading entities
             var count = await dbContext.Messages
                 .Where(m => m.FolderId == localFolder.Id && deletedUids.Contains(m.Uid))
                 .ExecuteDeleteAsync(cancellationToken);

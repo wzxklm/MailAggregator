@@ -120,9 +120,23 @@ public class AccountService : IAccountService
             }
         }
 
-        // Step 8: Save to database
-        _dbContext.Accounts.Add(account);
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        // Step 8: Save to database within a transaction to ensure atomicity.
+        // For OAuth accounts, the UI-driven token exchange may fail after the account is created,
+        // leaving an unusable account with OAuth type but no tokens. The transaction ensures
+        // the account entity is only committed if the save succeeds.
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            _dbContext.Accounts.Add(account);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            _logger.Error("Failed to save account for {EmailAddress}, transaction rolled back", emailAddress);
+            throw;
+        }
 
         _logger.Information("Account added successfully for {EmailAddress} with ID {AccountId}",
             emailAddress, account.Id);
@@ -232,7 +246,10 @@ public class AccountService : IAccountService
     {
         _logger.Debug("Retrieving account {AccountId}", accountId);
 
+        // Use AsNoTracking to match GetAllAccountsAsync behavior and avoid
+        // conflicts when the same entity is loaded from different DbContext scopes.
         var account = await _dbContext.Accounts
+            .AsNoTracking()
             .FirstOrDefaultAsync(a => a.Id == accountId, cancellationToken);
 
         if (account is null)

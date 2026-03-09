@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Net.NetworkInformation;
 using MailAggregator.Core.Models;
 using MailAggregator.Core.Services.Auth;
 using MailAggregator.Core.Services.Mail;
@@ -11,7 +12,7 @@ using LocalMailFolder = MailAggregator.Core.Models.MailFolder;
 
 namespace MailAggregator.Core.Services.Sync;
 
-public class SyncManager : ISyncManager
+public class SyncManager : ISyncManager, IDisposable
 {
     /// <summary>
     /// Maximum time to stay in IMAP IDLE before re-entering (RFC 2177 recommends &lt; 30 min).
@@ -25,19 +26,32 @@ public class SyncManager : ISyncManager
 
     /// <summary>
     /// Maximum reconnect delay (cap for exponential backoff).
+    /// Raised to 300s for long offline scenarios to reduce battery/resource waste.
     /// </summary>
-    internal static readonly TimeSpan MaxReconnectDelay = TimeSpan.FromSeconds(60);
+    internal static readonly TimeSpan MaxReconnectDelay = TimeSpan.FromSeconds(300);
 
     /// <summary>
     /// Polling interval used when the server does not support IMAP IDLE.
     /// </summary>
     internal static readonly TimeSpan PollingInterval = TimeSpan.FromMinutes(2);
 
+    /// <summary>
+    /// Jitter factor: backoff delay is randomized within [delay * (1 - factor), delay * (1 + factor)]
+    /// to prevent thundering herd when multiple accounts reconnect simultaneously.
+    /// </summary>
+    internal const double JitterFactor = 0.25;
+
     private readonly IImapConnectionService _imapConnectionService;
     private readonly IEmailSyncService _emailSyncService;
     private readonly ILogger _logger;
 
     private readonly ConcurrentDictionary<int, (Task SyncTask, CancellationTokenSource Cts)> _runningSyncs = new();
+
+    /// <summary>
+    /// Signaled when network becomes available again, allowing sync loops
+    /// to skip remaining backoff delay and reconnect immediately.
+    /// </summary>
+    private readonly ManualResetEventSlim _networkAvailable = new(true);
 
     public event EventHandler<NewEmailsEventArgs>? NewEmailsReceived;
 
@@ -49,6 +63,8 @@ public class SyncManager : ISyncManager
         _imapConnectionService = imapConnectionService ?? throw new ArgumentNullException(nameof(imapConnectionService));
         _emailSyncService = emailSyncService ?? throw new ArgumentNullException(nameof(emailSyncService));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+
+        NetworkChange.NetworkAvailabilityChanged += OnNetworkAvailabilityChanged;
     }
 
     public Task StartAccountSyncAsync(LocalAccount account, CancellationToken cancellationToken = default)
@@ -162,8 +178,9 @@ public class SyncManager : ISyncManager
     }
 
     /// <summary>
-    /// Calculates the exponential backoff delay for reconnection attempts.
-    /// Delay = min(InitialReconnectDelay * 2^attempt, MaxReconnectDelay).
+    /// Calculates the exponential backoff delay with jitter for reconnection attempts.
+    /// Base delay = min(InitialReconnectDelay * 2^attempt, MaxReconnectDelay),
+    /// then randomized within ±25% to prevent thundering herd.
     /// </summary>
     internal static TimeSpan CalculateBackoffDelay(int attempt)
     {
@@ -172,8 +189,13 @@ public class SyncManager : ISyncManager
         // Clamp the exponent to avoid overflow for very large attempt values
         var exponent = Math.Min(attempt, 30);
         var delayMs = InitialReconnectDelay.TotalMilliseconds * Math.Pow(2, exponent);
-        var cappedDelay = TimeSpan.FromMilliseconds(Math.Min(delayMs, MaxReconnectDelay.TotalMilliseconds));
-        return cappedDelay;
+        var cappedMs = Math.Min(delayMs, MaxReconnectDelay.TotalMilliseconds);
+
+        // Add jitter: randomize within [delay * 0.75, delay * 1.25]
+        var jitter = (Random.Shared.NextDouble() * 2 - 1) * JitterFactor; // [-0.25, +0.25]
+        var jitteredMs = cappedMs * (1 + jitter);
+
+        return TimeSpan.FromMilliseconds(Math.Max(jitteredMs, InitialReconnectDelay.TotalMilliseconds));
     }
 
     private async Task AccountSyncLoopAsync(LocalAccount account, CancellationToken cancellationToken)
@@ -284,10 +306,32 @@ public class SyncManager : ISyncManager
                 _logger.Error(ex, "Error in sync loop for account {AccountId} ({Email}). Reconnect attempt {Attempt}",
                     account.Id, account.EmailAddress, reconnectAttempt);
 
+                // If network is down, wait for it to come back before consuming backoff cycles
+                if (!_networkAvailable.IsSet)
+                {
+                    _logger.Information("Network unavailable, waiting for connectivity before reconnecting account {AccountId} ({Email})",
+                        account.Id, account.EmailAddress);
+
+                    try
+                    {
+                        await Task.Run(() => _networkAvailable.Wait(cancellationToken), cancellationToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+
+                    // Network is back — reset backoff so we reconnect quickly
+                    reconnectAttempt = 0;
+                    _logger.Information("Network restored, reconnecting immediately for account {AccountId} ({Email})",
+                        account.Id, account.EmailAddress);
+                    continue;
+                }
+
                 var delay = CalculateBackoffDelay(reconnectAttempt);
                 reconnectAttempt++;
 
-                _logger.Information("Reconnecting in {Delay}s for account {AccountId} ({Email})",
+                _logger.Information("Reconnecting in {Delay:F1}s for account {AccountId} ({Email})",
                     delay.TotalSeconds, account.Id, account.EmailAddress);
 
                 try
@@ -363,5 +407,25 @@ public class SyncManager : ISyncManager
     protected virtual void OnNewEmailsReceived(NewEmailsEventArgs e)
     {
         NewEmailsReceived?.Invoke(this, e);
+    }
+
+    private void OnNetworkAvailabilityChanged(object? sender, NetworkAvailabilityEventArgs e)
+    {
+        if (e.IsAvailable)
+        {
+            _logger.Information("Network connectivity restored — signaling sync loops to reconnect");
+            _networkAvailable.Set();
+        }
+        else
+        {
+            _logger.Warning("Network connectivity lost — sync loops will pause until restored");
+            _networkAvailable.Reset();
+        }
+    }
+
+    public void Dispose()
+    {
+        NetworkChange.NetworkAvailabilityChanged -= OnNetworkAvailabilityChanged;
+        _networkAvailable.Dispose();
     }
 }

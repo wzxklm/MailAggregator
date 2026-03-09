@@ -41,6 +41,7 @@ Authorization Code + PKCE flow.
 - `RefreshTokenAsync(provider, encryptedRefreshToken)` — refresh expired tokens (60s grace period)
 - **PKCE**: 128-char random code_verifier, S256 code_challenge (`Base64Url(SHA256(verifier))`)
 - **Security**: Tokens encrypted before return/storage
+- **Scope validation**: `ParseTokenResponse(responseBody, provider)` parses granted scopes from the `scope` field (space-delimited per RFC 6749 Section 3.3) and logs a warning if the server returned fewer scopes than requested (common with Microsoft omitting `offline_access`). Granted scopes stored in `OAuthTokenResult.GrantedScopes`. The `provider` parameter is required (not optional) so scope comparison is always available
 - **invalid_grant detection**: When a token exchange or refresh returns `invalid_grant` (token revoked/expired), `OAuthService` throws `OAuthReauthenticationRequiredException` instead of a generic `HttpRequestException`. Callers (e.g., `SyncManager`) catch this to stop sync gracefully and signal the user to re-authenticate
 - **Interface**: `IOAuthService`
 

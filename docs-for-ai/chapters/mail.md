@@ -2,19 +2,20 @@
 
 ## Auto-Discovery — `Services/Discovery/AutoDiscoveryService.cs`
 
-5-level fallback to find IMAP/SMTP server config from email address:
+6-level fallback to find IMAP/SMTP server config from email address:
 
 - **Level 1**: `https://autoconfig.{domain}/mail/config-v1.1.xml` (+ HTTP fallback)
 - **Level 2**: `https://{domain}/.well-known/autoconfig/mail/config-v1.1.xml` (+ HTTP fallback)
 - **Level 3**: `https://autoconfig.thunderbird.net/v1.1/{domain}` (Thunderbird ISPDB)
 - **Level 4**: DNS MX query → retry Level 1-3 with MX domain
-- **Level 5**: null (UI prompts manual config)
+- **Level 5**: RFC 6186 SRV records (`_imaps._tcp`, `_imap._tcp`, `_submission._tcp`) — SMTP SRV query runs in parallel with IMAP queries
+- **Level 6**: null (UI prompts manual config)
 - **Parallel discovery**: Levels 1-3 (including HTTP fallback URLs) run in parallel via `Task.WhenAny` (Thunderbird-style `promiseFirstSuccessful`). First successful result cancels remaining requests via linked `CancellationTokenSource`
 - **HTTP fallback**: Levels 1-2 also attempt HTTP URLs because many enterprise/small ISP servers only serve autoconfig over HTTP
 - **XML parsing**: `ParseAutoconfigXml()` from Thunderbird-format XML. Extracts `<authentication>` element (e.g., `"OAuth2"`, `"password-cleartext"`, `"password-encrypted"`) into `ServerConfiguration.Authentication` property
-- **MX parsing**: `nslookup` process, extract base domain; handles ccSLDs (co.uk, com.au, etc.) via `TwoLevelTlds` set
-- **MX security**: `ValidDomainRegex` prevents command injection; linked `CancellationTokenSource` enforces 10s nslookup timeout with `process.Kill()` on expiry
-- **Timeout**: 10s per HTTP request, 10s per nslookup
+- **DNS resolution**: Uses `DnsClient.NET` library (`ILookupClient`) for MX and SRV record queries. Constructor accepts `ILookupClient` for test injection. DNS timeout configured via `LookupClientOptions.Timeout` (10s)
+- **MX domain extraction**: `ExtractBaseDomain()` handles ccSLDs (co.uk, com.au, etc.) via `TwoLevelTlds` set
+- **Timeout**: 10s per HTTP request, 10s per DNS query
 - **Interface**: `IAutoDiscoveryService` — `DiscoverAsync(emailAddress)`
 
 ---
@@ -50,6 +51,7 @@ Reuse IMAP connections to avoid repeated TCP+TLS+AUTH handshakes.
 
 - `ConcurrentDictionary<int, ConcurrentQueue<ImapClient>>` (per-account)
 - **Max connections**: 2 per account
+- **Atomic pool size tracking**: `_poolCounts` (`ConcurrentDictionary<int, int>`) tracks active connections per account via `AddOrUpdate` atomic increment/decrement, preventing concurrent return-to-pool from exceeding `MaxConnectionsPerAccount`
 - **Validation**: check `IsConnected && IsAuthenticated` before reuse
 - **Graceful degradation**: stale connections auto-released
 - **Background cleanup timer**: `Timer` fires every 5 minutes (`CleanupInterval`) to remove stale/zombie connections from all account queues. Iterates each queue, dequeues and re-enqueues live connections, disposes dead ones. Guards against `_disposed` to avoid running after pool disposal. Handles NAT/mobile networks that silently drop TCP connections
@@ -77,8 +79,14 @@ Uses `IDbContextFactory<MailAggregatorDbContext>` — each operation creates its
 ### Incremental sync (`SyncIncrementalAsync`)
 - Check UIDVALIDITY (if changed → reset cache, re-sync)
 - Fetch new messages (UID > MaxUid)
-- Detect deleted messages (server UIDs vs local UIDs)
+- Sync flags and detect deletions via `SyncFlagsAndDetectDeletionsAsync` (single IMAP FETCH for both)
 - Update folder counts
+
+### Flag sync & deletion detection (`SyncFlagsAndDetectDeletionsAsync`)
+- Single IMAP FETCH (UIDs + Flags) for all locally-known messages — server returns only UIDs that still exist
+- **Flag sync**: Updates `IsRead` (`\Seen`) and `IsFlagged` (`\Flagged`) properties when server flags differ from local
+- **Deletion detection**: UIDs absent from server response are batch-deleted locally via `ExecuteDeleteAsync`
+- Replaces the former separate `SyncExistingMessageFlagsAsync` + `DetectDeletedMessagesAsync` methods
 
 ### Message operations
 - `SetMessageReadAsync` — update `\Seen` flag
@@ -108,10 +116,10 @@ Uses `IDbContextFactory<MailAggregatorDbContext>` — each operation creates its
 ## Account Management — `Services/AccountManagement/AccountService.cs`
 
 - **AddAccountAsync(emailAddress, password?)** — flow:
-  0. Check for duplicate email (+ unique DB index on `EmailAddress`) → 1. AutoDiscovery → 2. Create Account entity → 3. Check OAuth provider → 4. OAuth → set AuthType=OAuth2 / 5. Password → encrypt & store → 6. Validate IMAP (password only) → 7. Save to DB
+  0. Check for duplicate email (+ unique DB index on `EmailAddress`) → 1. AutoDiscovery → 2. Create Account entity → 3. Check OAuth provider → 4. OAuth → set AuthType=OAuth2 / 5. Password → encrypt & store → 6. Validate IMAP (password only) → 7. Save to DB within explicit transaction (rollback on failure to prevent orphaned OAuth accounts)
 - **UpdateAccountAsync** — validates host/port (non-empty host, port 1-65535 for both IMAP and SMTP), saves to DB, then restarts sync if the account is currently syncing (stop → remove pool connections → start with new config)
 - **DeleteAccountAsync** — full cleanup: 1. Stop SyncManager for account → 2. Release ImapConnectionPool → 3. Remove token refresh lock (`MailConnectionHelper.RemoveTokenRefreshLock`) → 4. Delete attachment files from disk → 5. Cascade delete DB entities (account + folders + messages + attachments)
-- **GetAllAccountsAsync** / **GetAccountByIdAsync**
+- **GetAllAccountsAsync** / **GetAccountByIdAsync** (both use `AsNoTracking` for consistency)
 - **ValidateConnectionAsync** — test IMAP connection
 - **Dependencies**: Injects `ISyncManager` and `IImapConnectionPool` for deletion cleanup
 - **Interface**: `IAccountService`
@@ -122,16 +130,18 @@ Uses `IDbContextFactory<MailAggregatorDbContext>` — each operation creates its
 
 IMAP IDLE background sync orchestrator.
 
-- **Constants**: `IdleTimeout = 29min` (RFC 2177 < 30min), `InitialReconnectDelay = 1s`, `MaxReconnectDelay = 60s`, `PollingInterval = 2min`
+- **Constants**: `IdleTimeout = 29min` (RFC 2177 < 30min), `InitialReconnectDelay = 1s`, `MaxReconnectDelay = 300s`, `PollingInterval = 2min`, `JitterFactor = 0.25`
 - **Concurrency**: `ConcurrentDictionary<int, (Task, CancellationTokenSource)>` per-account
 - **Watch loop** (`AccountSyncLoopAsync`):
   1. Connect IMAP → 2. Sync folders → 3. Inbox incremental sync → 4. Open Inbox, check `ImapCapabilities.Idle`
   5a. **IDLE path** (server supports IDLE): `IdleWaitAsync` enters IDLE, breaks on 29min timeout or server notification. If server rejects IDLE with BAD/NO (`ImapCommandException`), falls back to polling delay for that cycle
   5b. **Polling path** (no IDLE capability): `Task.Delay(PollingInterval)` + `NoOpAsync` to refresh server state
   6. Detect new messages → incremental sync → fire `NewEmailsReceived` → re-enter loop
-- **Exponential backoff**: `delay = min(1s × 2^attempt, 60s)`
+- **Exponential backoff with jitter**: `base = min(1s * 2^attempt, 300s)`, then randomized within +/-25% (`JitterFactor`) to prevent thundering herd. Minimum delay clamped to `InitialReconnectDelay`
+- **Network-aware reconnection**: Subscribes to `NetworkChange.NetworkAvailabilityChanged`. Uses `ManualResetEventSlim` (`_networkAvailable`): when network is down, sync loops wait on `_networkAvailable.Wait()` instead of consuming backoff cycles. When network restores, `_networkAvailable.Set()` unblocks all waiting loops and resets `reconnectAttempt = 0` for immediate reconnection
 - **Auth error handling**: non-transient auth errors → stop (no retry). `OAuthReauthenticationRequiredException` (invalid_grant) breaks the sync loop without retrying
 - **Graceful shutdown**: `StopAllAsync()` — cancel all tokens, await all tasks
+- **Disposal**: `Dispose()` unsubscribes from `NetworkChange` event and disposes `_networkAvailable`
 - **Event**: `NewEmailsReceived` (`EventHandler<NewEmailsEventArgs>`)
 - **Interface**: `ISyncManager`
 
@@ -141,7 +151,7 @@ IMAP IDLE background sync orchestrator.
 
 | Component | Mechanism |
 |-----------|-----------|
-| IMAP pool | `ConcurrentDictionary` + `ConcurrentQueue` + background `Timer` cleanup (5min) |
+| IMAP pool | `ConcurrentDictionary` + `ConcurrentQueue` + `_poolCounts` atomic tracking + background `Timer` cleanup (5min) |
 | Token refresh | Per-account `SemaphoreSlim` with double-check pattern (prevents IMAP/SMTP concurrent refresh) |
 | SyncManager | `ConcurrentDictionary.GetOrAdd()` (atomic, no TOCTOU) |
 | DB operations | `IDbContextFactory` → scoped DbContext per operation (EmailSyncService, ImapConnectionService, SmtpConnectionService) |

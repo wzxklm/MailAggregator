@@ -321,77 +321,44 @@ public class AutoDiscoveryServiceTests
 
     #endregion
 
-    #region MX parsing
+    #region Domain extraction (ExtractBaseDomain)
 
     [Fact]
-    public void ParseMxFromNslookup_ValidOutput_ExtractsDomain()
+    public void ExtractBaseDomain_StandardMxHost_ExtractsDomain()
     {
-        var output = """
-            Server:  8.8.8.8
-            Address: 8.8.8.8#53
-
-            Non-authoritative answer:
-            gmail.com	mail exchanger = 5 gmail-smtp-in.l.google.com.
-            gmail.com	mail exchanger = 10 alt1.gmail-smtp-in.l.google.com.
-            """;
-
-        var domain = AutoDiscoveryService.ParseMxFromNslookup(output);
+        var domain = AutoDiscoveryService.ExtractBaseDomain("alt1.gmail-smtp-in.l.google.com");
         domain.Should().Be("google.com");
     }
 
-    [Fact]
-    public void ParseMxFromNslookup_NoMxRecord_ReturnsNull()
-    {
-        var output = """
-            Server:  8.8.8.8
-            Address: 8.8.8.8#53
-
-            ** server can't find nxdomain.example.com: NXDOMAIN
-            """;
-
-        var domain = AutoDiscoveryService.ParseMxFromNslookup(output);
-        domain.Should().BeNull();
-    }
-
-    [Fact]
-    public void ParseMxFromNslookup_EmptyOutput_ReturnsNull()
-    {
-        AutoDiscoveryService.ParseMxFromNslookup("").Should().BeNull();
-        AutoDiscoveryService.ParseMxFromNslookup(null!).Should().BeNull();
-    }
-
     [Theory]
-    [InlineData("mx1.mail.yahoo.co.uk.", "yahoo.co.uk")]
-    [InlineData("mail.example.co.jp.", "example.co.jp")]
-    [InlineData("smtp.provider.com.cn.", "provider.com.cn")]
-    [InlineData("mx.host.com.au.", "host.com.au")]
-    public void ParseMxFromNslookup_CountryTwoLevelTld_ExtractsCorrectDomain(string mxHost, string expected)
+    [InlineData("mx1.mail.yahoo.co.uk", "yahoo.co.uk")]
+    [InlineData("mail.example.co.jp", "example.co.jp")]
+    [InlineData("smtp.provider.com.cn", "provider.com.cn")]
+    [InlineData("mx.host.com.au", "host.com.au")]
+    public void ExtractBaseDomain_CountryTwoLevelTld_ExtractsCorrectDomain(string mxHost, string expected)
     {
-        var output = $"""
-            Server:  8.8.8.8
-            Address: 8.8.8.8#53
-
-            Non-authoritative answer:
-            example.com	mail exchanger = 10 {mxHost}
-            """;
-
-        var domain = AutoDiscoveryService.ParseMxFromNslookup(output);
+        var domain = AutoDiscoveryService.ExtractBaseDomain(mxHost);
         domain.Should().Be(expected);
     }
 
     [Fact]
-    public void ParseMxFromNslookup_RegularTld_StillWorks()
+    public void ExtractBaseDomain_RegularTld_Works()
     {
-        var output = """
-            Server:  8.8.8.8
-            Address: 8.8.8.8#53
-
-            Non-authoritative answer:
-            example.com	mail exchanger = 10 mx.mailprovider.com.
-            """;
-
-        var domain = AutoDiscoveryService.ParseMxFromNslookup(output);
+        var domain = AutoDiscoveryService.ExtractBaseDomain("mx.mailprovider.com");
         domain.Should().Be("mailprovider.com");
+    }
+
+    [Fact]
+    public void ExtractBaseDomain_EmptyOrNull_ReturnsNull()
+    {
+        AutoDiscoveryService.ExtractBaseDomain("").Should().BeNull();
+        AutoDiscoveryService.ExtractBaseDomain(null!).Should().BeNull();
+    }
+
+    [Fact]
+    public void ExtractBaseDomain_SimpleTwoPartDomain_ReturnsSame()
+    {
+        AutoDiscoveryService.ExtractBaseDomain("google.com").Should().Be("google.com");
     }
 
     #endregion
@@ -420,7 +387,7 @@ public class AutoDiscoveryServiceTests
     #region Test helpers
 
     /// <summary>
-    /// Subclass that overrides MX resolution to avoid real DNS lookups in tests.
+    /// Subclass that overrides DNS resolution to avoid real DNS lookups in tests.
     /// </summary>
     private class TestableAutoDiscoveryService : AutoDiscoveryService
     {
@@ -435,6 +402,11 @@ public class AutoDiscoveryServiceTests
         protected internal override Task<string?> ResolveMxDomainAsync(string domain, CancellationToken cancellationToken)
         {
             return Task.FromResult(_mxDomain);
+        }
+
+        protected internal override Task<ServerConfiguration?> TryDiscoverViaSrvAsync(string domain, CancellationToken cancellationToken)
+        {
+            return Task.FromResult<ServerConfiguration?>(null);
         }
     }
 
