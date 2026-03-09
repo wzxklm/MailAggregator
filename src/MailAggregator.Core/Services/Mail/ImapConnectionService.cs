@@ -84,6 +84,12 @@ public class ImapConnectionService : IImapConnectionService
                 client.Dispose();
                 throw;
             }
+            catch (ImapCommandException ex) when (MailConnectionHelper.IsNonTransientAuthError(ex))
+            {
+                client.Dispose();
+                _logger.Error(ex, "Non-transient auth error for {Email}, not retrying", account.EmailAddress);
+                throw;
+            }
             catch (Exception ex)
             {
                 client.Dispose();

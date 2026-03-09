@@ -94,7 +94,7 @@
 **Key commands**:
 | Command | Action |
 |---------|--------|
-| `LoadAccountsCommand` | Load all → sync folders → build tree → start background sync |
+| `LoadAccountsCommand` | Load all → sync folders → build tree → start background sync. Per-account folder sync is wrapped in try/catch so one account's IMAP failure doesn't block others |
 | `SelectFolderCommand` | Incremental sync → load ≤200 emails (no body) |
 | `ShowUnifiedInboxCommand` | Sync all Inboxes → merge display |
 | `MarkAsReadCommand` | Mark as read |

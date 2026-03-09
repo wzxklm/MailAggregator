@@ -5,6 +5,7 @@ DevContainer (Ubuntu 22.04 + CUDA 12.4), manually built and ready to use.
 # 2. Project Documentation
 
 Documentation directory: `docs-for-ai/`
+
 - `index.md` — project index: overview, directory tree, architecture diagram, chapter index
 - `pitfalls.md` — project-specific pitfalls and coding conventions
 - `chapters/` — detailed documentation (read on-demand by topic):
@@ -14,7 +15,6 @@ Documentation directory: `docs-for-ai/`
   - `desktop.md` — WPF UI layer, ViewModels, views, styles, DI registrations
   - `tests.md` — test structure, file list, test patterns
   - `workflows.md` — end-to-end workflow diagrams
-- `thunderbird-comparison.md` — security audit
 
 # 3. CI/CD
 

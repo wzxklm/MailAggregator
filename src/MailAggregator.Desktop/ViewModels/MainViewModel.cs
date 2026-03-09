@@ -84,11 +84,19 @@ public partial class MainViewModel : ObservableObject, IDisposable
             var accounts = await _accountService.GetAllAccountsAsync();
             Accounts = new ObservableCollection<Account>(accounts);
 
-            // Sync folders for all accounts concurrently
+            // Sync folders for all accounts concurrently (per-account errors don't block others)
             var syncTasks = accounts.Select(async account =>
             {
-                var folders = await _emailSyncService.SyncFoldersAsync(account);
-                return (account, folders);
+                try
+                {
+                    var folders = await _emailSyncService.SyncFoldersAsync(account);
+                    return (account, folders: (IReadOnlyList<MailFolder>?)folders);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error(ex, "Failed to sync folders for {Email}", account.EmailAddress);
+                    return (account, folders: null);
+                }
             });
             var results = await Task.WhenAll(syncTasks);
 
@@ -102,15 +110,18 @@ public partial class MainViewModel : ObservableObject, IDisposable
                     IsAccount = true
                 };
 
-                foreach (var folder in folders.OrderBy(f => f.SpecialUse != SpecialFolderType.Inbox)
-                                              .ThenBy(f => f.Name))
+                if (folders != null)
                 {
-                    accountNode.Children.Add(new AccountFolderNode
+                    foreach (var folder in folders.OrderBy(f => f.SpecialUse != SpecialFolderType.Inbox)
+                                                  .ThenBy(f => f.Name))
                     {
-                        DisplayName = folder.Name,
-                        Folder = folder,
-                        Account = account
-                    });
+                        accountNode.Children.Add(new AccountFolderNode
+                        {
+                            DisplayName = folder.Name,
+                            Folder = folder,
+                            Account = account
+                        });
+                    }
                 }
 
                 newTree.Add(accountNode);

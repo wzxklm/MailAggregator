@@ -48,7 +48,8 @@ internal static class MailConnectionHelper
         var msg = ex.ResponseText ?? ex.Message;
         return msg.Contains("Unsafe Login", StringComparison.OrdinalIgnoreCase)
             || msg.Contains("Authentication", StringComparison.OrdinalIgnoreCase)
-            || msg.Contains("LOGIN", StringComparison.OrdinalIgnoreCase);
+            || msg.Contains("LOGIN", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("not connected", StringComparison.OrdinalIgnoreCase);
     }
 
     internal static SecureSocketOptions GetSecureSocketOptions(ConnectionEncryptionType encryption) => encryption switch

@@ -32,13 +32,14 @@ Shared logic for all IMAP/SMTP connections (internal static).
   - Password: decrypt → plaintext auth
 - **Token refresh concurrency protection**: Per-account `SemaphoreSlim` (stored in `ConcurrentDictionary<int, SemaphoreSlim>`) prevents IMAP and SMTP from refreshing the same account's token simultaneously. Uses double-check pattern: re-checks expiry after acquiring lock in case another caller already refreshed
 - `RemoveTokenRefreshLock(accountId)` — disposes and removes the semaphore for a deleted account (called by `AccountService.DeleteAccountAsync` to prevent memory leaks)
-- `IsNonTransientAuthError(ImapCommandException)` — detects non-transient auth/access errors in IMAP NO responses by checking for "Unsafe Login", "Authentication", or "LOGIN" keywords. Used by `SyncManager` catch block and `EmailSyncService` folder-open error handling to stop the sync loop rather than retrying or incorrectly deleting the folder
+- `IsNonTransientAuthError(ImapCommandException)` — detects non-transient auth/access errors in IMAP NO responses by checking for "Unsafe Login", "Authentication", "LOGIN", or "not connected" keywords (the last catches Microsoft's "User is authenticated but not connected" error). Used by `SyncManager` catch block, `EmailSyncService` folder-open error handling, and `ImapConnectionService` retry loop to stop immediately rather than retrying or incorrectly deleting the folder
 
 ## IMAP Connection — `Services/Mail/ImapConnectionService.cs`
 
 - 3 retries + exponential backoff
 - SOCKS5 proxy support
 - **IMAP ID (RFC 2971)**: After connecting, if the server advertises `ImapCapabilities.Id`, sends an `IdentifyAsync` with client name/version before authentication. Required by providers like 163.com (Coremail) that reject login without client identification ("Unsafe Login"). Failure is non-fatal (logged and swallowed)
+- **Non-transient auth error bypass**: Catches `ImapCommandException` matching `IsNonTransientAuthError` inside the retry loop and rethrows immediately, avoiding wasted retry attempts on errors that will never succeed (e.g., Microsoft's "User is authenticated but not connected")
 - OAuth token refresh + persist refreshed tokens (`PersistRefreshedTokenAsync`)
 - **Interface**: `IImapConnectionService` — `ConnectAsync(account)`
 

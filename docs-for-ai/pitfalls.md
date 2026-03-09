@@ -22,6 +22,7 @@
 - **IMAP IDLE 必须独立连接**：IDLE 占用连接，不能复用同步连接。连接池 per-account 最多 2 个连接
 - **IDLE 超时**：RFC 2177 要求 < 30 分钟，项目设 29 分钟。超时后必须重新打开文件夹再进入 IDLE
 - **连接复用前必须验证**：从池中取出的连接必须检查 `IsConnected && IsAuthenticated`，失效则释放
+- **Microsoft "User is authenticated but not connected" 是非瞬态错误**：Microsoft IMAP 服务器可能返回此错误，表示账户虽已认证但无法连接（通常是账户配置/许可问题）。`IsNonTransientAuthError` 通过 "not connected" 关键字检测此错误。`ImapConnectionService` 的重试循环捕获此类错误后立即抛出，不浪费重试次数
 - **MimeKit TryParse 不验证地址格式**：`InternetAddressList.TryParse` 对纯数字等无效输入（如 `1`）仍返回成功并构造无域名的 `MailboxAddress`。发送前必须调用 `ParseAndValidateAddresses` 检查每个地址包含 `@` 且 local/domain 非空，否则无效地址直达 SMTP 服务器返回不友好的 5xx 错误
 
 ## OAuth
@@ -38,6 +39,7 @@
 - **样式统一放 `Resources/Styles.xaml`**：app-level 资源字典，不要在单个 Window 里定义样式或转换器
 - **ViewModel 必须退订单例事件**：订阅 `SyncManager.NewEmailsReceived` 等单例事件的 ViewModel 必须实现 `IDisposable` 并在 Dispose 中退订，否则内存泄漏
 - **UI 线程更新**：后台事件回调中修改 ObservableCollection 必须用 `Dispatcher.Invoke()` 切到 UI 线程
+- **多账户并发操作须逐个隔离错误**：`LoadAccountsAsync` 中每个账户的文件夹同步用独立 try/catch 包裹，单个账户的 IMAP 错误（如认证失败、服务器不可达）不阻塞其他账户加载。任何新增的多账户循环操作都应遵循此模式
 - **Desktop 项目需要 `UseWindowsForms=true`**：NotifyIcon（Toast 通知）依赖 WinForms，csproj 中必须启用
 
 ## 邮件发现 & 同步
