@@ -188,6 +188,7 @@ public class OAuthServiceTests : IDisposable
         query["code_challenge"].Should().BeNull();
         query["code_challenge_method"].Should().BeNull();
         query["scope"].Should().Be("https://mail.google.com/");
+        query["state"].Should().NotBeNullOrEmpty("state parameter is required for CSRF protection");
     }
 
     [Fact]
@@ -253,6 +254,21 @@ public class OAuthServiceTests : IDisposable
         var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
         query["scope"].Should().Contain("https://outlook.office365.com/IMAP.AccessAsUser.All");
         query["scope"].Should().Contain("offline_access");
+    }
+
+    [Fact]
+    public void PrepareAuthorization_GeneratesUniqueStateValues()
+    {
+        var service = CreateService();
+        var provider = TestProviders[0];
+
+        var (url1, _, _, _) = service.PrepareAuthorization(provider);
+        var (url2, _, _, _) = service.PrepareAuthorization(provider);
+
+        var state1 = System.Web.HttpUtility.ParseQueryString(new Uri(url1).Query)["state"];
+        var state2 = System.Web.HttpUtility.ParseQueryString(new Uri(url2).Query)["state"];
+
+        state1.Should().NotBe(state2, "each invocation should produce a unique state value");
     }
 
     #endregion

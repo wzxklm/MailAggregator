@@ -86,7 +86,7 @@ public class MailAggregatorDbContext : DbContext
             entity.Property(e => e.ImapHost).IsRequired().HasMaxLength(256);
             entity.Property(e => e.SmtpHost).IsRequired().HasMaxLength(256);
             entity.Property(e => e.ProxyHost).HasMaxLength(256);
-            entity.HasIndex(e => e.EmailAddress);
+            entity.HasIndex(e => e.EmailAddress).IsUnique();
         });
 
         // MailFolder

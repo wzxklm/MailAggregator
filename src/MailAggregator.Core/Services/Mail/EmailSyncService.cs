@@ -16,16 +16,16 @@ public class EmailSyncService : IEmailSyncService
     private const int InitialSyncDays = 30;
 
     private readonly IImapConnectionPool _connectionPool;
-    private readonly MailAggregatorDbContext _dbContext;
+    private readonly IDbContextFactory<MailAggregatorDbContext> _dbContextFactory;
     private readonly ILogger _logger;
 
     public EmailSyncService(
         IImapConnectionPool connectionPool,
-        MailAggregatorDbContext dbContext,
+        IDbContextFactory<MailAggregatorDbContext> dbContextFactory,
         ILogger logger)
     {
         _connectionPool = connectionPool ?? throw new ArgumentNullException(nameof(connectionPool));
-        _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
+        _dbContextFactory = dbContextFactory ?? throw new ArgumentNullException(nameof(dbContextFactory));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -33,21 +33,23 @@ public class EmailSyncService : IEmailSyncService
     {
         ArgumentNullException.ThrowIfNull(account);
         using var pooled = await _connectionPool.GetConnectionAsync(account, cancellationToken);
-        return await SyncFoldersCoreAsync(account, pooled.Client, cancellationToken);
+        using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
+        return await SyncFoldersCoreAsync(account, pooled.Client, dbContext, cancellationToken);
     }
 
     public async Task<IReadOnlyList<LocalMailFolder>> SyncFoldersAsync(Account account, ImapClient client, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(account);
-        return await SyncFoldersCoreAsync(account, client, cancellationToken);
+        using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
+        return await SyncFoldersCoreAsync(account, client, dbContext, cancellationToken);
     }
 
-    private async Task<IReadOnlyList<LocalMailFolder>> SyncFoldersCoreAsync(Account account, ImapClient client, CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<LocalMailFolder>> SyncFoldersCoreAsync(Account account, ImapClient client, MailAggregatorDbContext dbContext, CancellationToken cancellationToken)
     {
         var personalNamespace = client.PersonalNamespaces[0];
         var imapFolders = await client.GetFoldersAsync(personalNamespace, cancellationToken: cancellationToken);
 
-        var localFolders = await _dbContext.Folders
+        var localFolders = await dbContext.Folders
             .Where(f => f.AccountId == account.Id)
             .ToListAsync(cancellationToken);
 
@@ -76,21 +78,21 @@ public class EmailSyncService : IEmailSyncService
                     FullName = imapFolder.FullName,
                     SpecialUse = MapSpecialUse(imapFolder.Attributes)
                 };
-                _dbContext.Folders.Add(newFolder);
+                dbContext.Folders.Add(newFolder);
             }
         }
 
         // Remove local folders no longer on server
         var removedFolders = localFolders.Where(f => !serverFolderNames.Contains(f.FullName)).ToList();
-        _dbContext.Folders.RemoveRange(removedFolders);
+        dbContext.Folders.RemoveRange(removedFolders);
 
-        await SaveChangesSafeAsync(cancellationToken);
+        await SaveChangesSafeAsync(dbContext, cancellationToken);
 
         _logger.Information("Synced {Count} folders for {Email}", serverFolderNames.Count, account.EmailAddress);
 
         // Return tracked entities directly instead of re-querying
         return localFolders.Where(f => serverFolderNames.Contains(f.FullName))
-            .Concat(_dbContext.Folders.Local.Where(f => f.AccountId == account.Id && !localFolderMap.ContainsKey(f.FullName)))
+            .Concat(dbContext.Folders.Local.Where(f => f.AccountId == account.Id && !localFolderMap.ContainsKey(f.FullName)))
             .ToList();
     }
 
@@ -100,6 +102,7 @@ public class EmailSyncService : IEmailSyncService
         ArgumentNullException.ThrowIfNull(folder);
 
         using var pooled = await _connectionPool.GetConnectionAsync(account, cancellationToken);
+        using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
         var client = pooled.Client;
         var imapFolder = await client.GetFolderAsync(folder.FullName, cancellationToken);
         await imapFolder.OpenAsync(FolderAccess.ReadOnly, cancellationToken);
@@ -117,15 +120,15 @@ public class EmailSyncService : IEmailSyncService
 
         if (uids.Count > 0)
         {
-            await FetchAndCacheMessagesAsync(imapFolder, folder, account, uids, cancellationToken);
+            await FetchAndCacheMessagesAsync(imapFolder, folder, account, uids, dbContext, cancellationToken);
             folder.MaxUid = uids.Max(u => u.Id);
         }
 
         folder.MessageCount = imapFolder.Count;
         folder.UnreadCount = imapFolder.Unread;
 
-        _dbContext.Folders.Update(folder);
-        await SaveChangesSafeAsync(cancellationToken);
+        dbContext.Folders.Update(folder);
+        await SaveChangesSafeAsync(dbContext, cancellationToken);
 
         await imapFolder.CloseAsync(false, cancellationToken);
     }
@@ -135,17 +138,19 @@ public class EmailSyncService : IEmailSyncService
         ArgumentNullException.ThrowIfNull(account);
         ArgumentNullException.ThrowIfNull(folder);
         using var pooled = await _connectionPool.GetConnectionAsync(account, cancellationToken);
-        await SyncIncrementalCoreAsync(account, folder, pooled.Client, cancellationToken);
+        using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
+        await SyncIncrementalCoreAsync(account, folder, pooled.Client, dbContext, cancellationToken);
     }
 
     public async Task SyncIncrementalAsync(Account account, LocalMailFolder folder, ImapClient client, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(account);
         ArgumentNullException.ThrowIfNull(folder);
-        await SyncIncrementalCoreAsync(account, folder, client, cancellationToken);
+        using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
+        await SyncIncrementalCoreAsync(account, folder, client, dbContext, cancellationToken);
     }
 
-    private async Task SyncIncrementalCoreAsync(Account account, LocalMailFolder folder, ImapClient client, CancellationToken cancellationToken)
+    private async Task SyncIncrementalCoreAsync(Account account, LocalMailFolder folder, ImapClient client, MailAggregatorDbContext dbContext, CancellationToken cancellationToken)
     {
         var imapFolder = await client.GetFolderAsync(folder.FullName, cancellationToken);
         try
@@ -156,8 +161,8 @@ public class EmailSyncService : IEmailSyncService
         {
             _logger.Warning("Folder {Folder} is not selectable for {Email}, removing from local cache",
                 folder.FullName, account.EmailAddress);
-            _dbContext.Folders.Remove(folder);
-            await SaveChangesSafeAsync(cancellationToken);
+            dbContext.Folders.Remove(folder);
+            await SaveChangesSafeAsync(dbContext, cancellationToken);
             return;
         }
 
@@ -167,14 +172,14 @@ public class EmailSyncService : IEmailSyncService
             _logger.Warning("UIDVALIDITY changed for {Folder} in {Email} (was {Old}, now {New}). Resetting cache.",
                 folder.FullName, account.EmailAddress, folder.UidValidity, imapFolder.UidValidity);
 
-            await _dbContext.Messages
+            await dbContext.Messages
                 .Where(m => m.FolderId == folder.Id)
                 .ExecuteDeleteAsync(cancellationToken);
 
             folder.UidValidity = imapFolder.UidValidity;
             folder.MaxUid = 0;
 
-            // Perform initial sync instead (creates its own connection)
+            // Perform initial sync instead (creates its own DbContext and connection)
             await imapFolder.CloseAsync(false, cancellationToken);
             await SyncInitialAsync(account, folder, cancellationToken);
             return;
@@ -191,19 +196,19 @@ public class EmailSyncService : IEmailSyncService
                 _logger.Information("Incremental sync: {Count} new messages in {Folder} for {Email}",
                     uids.Count, folder.FullName, account.EmailAddress);
 
-                await FetchAndCacheMessagesAsync(imapFolder, folder, account, uids, cancellationToken);
+                await FetchAndCacheMessagesAsync(imapFolder, folder, account, uids, dbContext, cancellationToken);
                 folder.MaxUid = uids.Max(u => u.Id);
             }
         }
 
         // Detect deleted messages
-        await DetectDeletedMessagesAsync(imapFolder, folder, cancellationToken);
+        await DetectDeletedMessagesAsync(imapFolder, folder, dbContext, cancellationToken);
 
         folder.MessageCount = imapFolder.Count;
         folder.UnreadCount = imapFolder.Unread;
 
-        _dbContext.Folders.Update(folder);
-        await SaveChangesSafeAsync(cancellationToken);
+        dbContext.Folders.Update(folder);
+        await SaveChangesSafeAsync(dbContext, cancellationToken);
 
         await imapFolder.CloseAsync(false, cancellationToken);
     }
@@ -213,7 +218,9 @@ public class EmailSyncService : IEmailSyncService
         ArgumentNullException.ThrowIfNull(account);
         ArgumentNullException.ThrowIfNull(message);
 
-        var folder = await _dbContext.Folders.FindAsync(new object[] { message.FolderId }, cancellationToken)
+        using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
+
+        var folder = await dbContext.Folders.FindAsync(new object[] { message.FolderId }, cancellationToken)
             ?? throw new InvalidOperationException($"Folder {message.FolderId} not found.");
 
         using var pooled = await _connectionPool.GetConnectionAsync(account, cancellationToken);
@@ -228,7 +235,7 @@ public class EmailSyncService : IEmailSyncService
             await imapFolder.RemoveFlagsAsync(uid, MessageFlags.Seen, true, cancellationToken);
 
         message.IsRead = isRead;
-        var tracked = _dbContext.ChangeTracker.Entries<EmailMessage>()
+        var tracked = dbContext.ChangeTracker.Entries<EmailMessage>()
             .FirstOrDefault(e => e.Entity.Id == message.Id);
 
         if (tracked != null)
@@ -238,10 +245,10 @@ public class EmailSyncService : IEmailSyncService
         }
         else
         {
-            _dbContext.Messages.Attach(message);
-            _dbContext.Entry(message).Property(m => m.IsRead).IsModified = true;
+            dbContext.Messages.Attach(message);
+            dbContext.Entry(message).Property(m => m.IsRead).IsModified = true;
         }
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        await dbContext.SaveChangesAsync(cancellationToken);
 
         await imapFolder.CloseAsync(false, cancellationToken);
 
@@ -256,7 +263,9 @@ public class EmailSyncService : IEmailSyncService
         ArgumentNullException.ThrowIfNull(attachment);
         ArgumentException.ThrowIfNullOrEmpty(savePath);
 
-        var folder = await _dbContext.Folders.FindAsync(new object[] { message.FolderId }, cancellationToken)
+        using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
+
+        var folder = await dbContext.Folders.FindAsync(new object[] { message.FolderId }, cancellationToken)
             ?? throw new InvalidOperationException($"Folder {message.FolderId} not found.");
 
         using var pooled = await _connectionPool.GetConnectionAsync(account, cancellationToken);
@@ -281,8 +290,8 @@ public class EmailSyncService : IEmailSyncService
         await mimePart.Content.DecodeToAsync(stream, cancellationToken);
 
         attachment.LocalPath = savePath;
-        _dbContext.Attachments.Update(attachment);
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        dbContext.Attachments.Update(attachment);
+        await dbContext.SaveChangesAsync(cancellationToken);
 
         await imapFolder.CloseAsync(false, cancellationToken);
 
@@ -296,7 +305,9 @@ public class EmailSyncService : IEmailSyncService
         ArgumentNullException.ThrowIfNull(message);
         ArgumentNullException.ThrowIfNull(destinationFolder);
 
-        var sourceFolder = await _dbContext.Folders.FindAsync(new object[] { message.FolderId }, cancellationToken)
+        using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
+
+        var sourceFolder = await dbContext.Folders.FindAsync(new object[] { message.FolderId }, cancellationToken)
             ?? throw new InvalidOperationException($"Source folder {message.FolderId} not found.");
 
         using var pooled = await _connectionPool.GetConnectionAsync(account, cancellationToken);
@@ -314,8 +325,8 @@ public class EmailSyncService : IEmailSyncService
         if (newUid.HasValue)
             message.Uid = newUid.Value.Id;
 
-        _dbContext.Messages.Update(message);
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        dbContext.Messages.Update(message);
+        await dbContext.SaveChangesAsync(cancellationToken);
 
         await imapSourceFolder.CloseAsync(false, cancellationToken);
 
@@ -328,7 +339,9 @@ public class EmailSyncService : IEmailSyncService
         ArgumentNullException.ThrowIfNull(account);
         ArgumentNullException.ThrowIfNull(message);
 
-        var trashFolder = await _dbContext.Folders
+        using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
+
+        var trashFolder = await dbContext.Folders
             .FirstOrDefaultAsync(f => f.AccountId == account.Id && f.SpecialUse == SpecialFolderType.Trash, cancellationToken)
             ?? throw new InvalidOperationException("Trash folder not found for this account. Sync folders first.");
 
@@ -343,8 +356,8 @@ public class EmailSyncService : IEmailSyncService
             await imapFolder.AddFlagsAsync(uid, MessageFlags.Deleted, true, cancellationToken);
             await imapFolder.ExpungeAsync(cancellationToken);
 
-            _dbContext.Messages.Remove(message);
-            await _dbContext.SaveChangesAsync(cancellationToken);
+            dbContext.Messages.Remove(message);
+            await dbContext.SaveChangesAsync(cancellationToken);
 
             await imapFolder.CloseAsync(false, cancellationToken);
 
@@ -362,7 +375,9 @@ public class EmailSyncService : IEmailSyncService
         ArgumentNullException.ThrowIfNull(account);
         ArgumentNullException.ThrowIfNull(message);
 
-        var folder = await _dbContext.Folders.FindAsync(new object[] { message.FolderId }, cancellationToken)
+        using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
+
+        var folder = await dbContext.Folders.FindAsync(new object[] { message.FolderId }, cancellationToken)
             ?? throw new InvalidOperationException($"Folder {message.FolderId} not found.");
 
         using var pooled = await _connectionPool.GetConnectionAsync(account, cancellationToken);
@@ -394,7 +409,7 @@ public class EmailSyncService : IEmailSyncService
 
         message.HasAttachments = message.Attachments.Count > 0;
 
-        var tracked = _dbContext.ChangeTracker.Entries<EmailMessage>()
+        var tracked = dbContext.ChangeTracker.Entries<EmailMessage>()
             .FirstOrDefault(e => e.Entity.Id == message.Id);
         if (tracked != null)
         {
@@ -405,14 +420,14 @@ public class EmailSyncService : IEmailSyncService
         }
         else
         {
-            _dbContext.Messages.Attach(message);
-            _dbContext.Entry(message).Property(m => m.BodyText).IsModified = true;
-            _dbContext.Entry(message).Property(m => m.BodyHtml).IsModified = true;
-            _dbContext.Entry(message).Property(m => m.References).IsModified = true;
-            _dbContext.Entry(message).Property(m => m.HasAttachments).IsModified = true;
+            dbContext.Messages.Attach(message);
+            dbContext.Entry(message).Property(m => m.BodyText).IsModified = true;
+            dbContext.Entry(message).Property(m => m.BodyHtml).IsModified = true;
+            dbContext.Entry(message).Property(m => m.References).IsModified = true;
+            dbContext.Entry(message).Property(m => m.HasAttachments).IsModified = true;
         }
 
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        await dbContext.SaveChangesAsync(cancellationToken);
         await imapFolder.CloseAsync(false, cancellationToken);
 
         _logger.Debug("Fetched body for UID {Uid} in {Folder} for {Email}",
@@ -424,9 +439,10 @@ public class EmailSyncService : IEmailSyncService
         LocalMailFolder localFolder,
         Account account,
         IList<UniqueId> uids,
+        MailAggregatorDbContext dbContext,
         CancellationToken cancellationToken)
     {
-        var existingUidList = await _dbContext.Messages
+        var existingUidList = await dbContext.Messages
             .Where(m => m.FolderId == localFolder.Id)
             .Select(m => m.Uid)
             .ToListAsync(cancellationToken);
@@ -473,26 +489,26 @@ public class EmailSyncService : IEmailSyncService
             // Body and attachments are fetched lazily when the user opens the email
             // (via FetchMessageBodyAsync). This avoids N IMAP round-trips during sync.
 
-            _dbContext.Messages.Add(emailMessage);
+            dbContext.Messages.Add(emailMessage);
             processedInBatch++;
 
             if (processedInBatch >= batchSize)
             {
-                await SaveChangesSafeAsync(cancellationToken);
+                await SaveChangesSafeAsync(dbContext, cancellationToken);
                 processedInBatch = 0;
             }
         }
 
         if (processedInBatch > 0)
-            await SaveChangesSafeAsync(cancellationToken);
+            await SaveChangesSafeAsync(dbContext, cancellationToken);
     }
 
-    private async Task DetectDeletedMessagesAsync(IMailFolder imapFolder, LocalMailFolder localFolder, CancellationToken cancellationToken)
+    private async Task DetectDeletedMessagesAsync(IMailFolder imapFolder, LocalMailFolder localFolder, MailAggregatorDbContext dbContext, CancellationToken cancellationToken)
     {
         var allServerUids = await imapFolder.SearchAsync(SearchQuery.All, cancellationToken);
         var serverUidSet = allServerUids.Select(u => u.Id).ToHashSet();
 
-        var localUids = await _dbContext.Messages
+        var localUids = await dbContext.Messages
             .Where(m => m.FolderId == localFolder.Id)
             .Select(m => m.Uid)
             .ToListAsync(cancellationToken);
@@ -502,7 +518,7 @@ public class EmailSyncService : IEmailSyncService
         if (deletedUids.Count > 0)
         {
             // Use ExecuteDeleteAsync to delete in a single SQL statement without loading entities
-            var count = await _dbContext.Messages
+            var count = await dbContext.Messages
                 .Where(m => m.FolderId == localFolder.Id && deletedUids.Contains(m.Uid))
                 .ExecuteDeleteAsync(cancellationToken);
 
@@ -532,11 +548,11 @@ public class EmailSyncService : IEmailSyncService
     /// Saves changes, gracefully handling concurrency conflicts from parallel sync operations.
     /// Conflicting (stale) entities are detached and remaining changes are retried.
     /// </summary>
-    private async Task SaveChangesSafeAsync(CancellationToken cancellationToken)
+    private async Task SaveChangesSafeAsync(MailAggregatorDbContext dbContext, CancellationToken cancellationToken)
     {
         try
         {
-            await _dbContext.SaveChangesAsync(cancellationToken);
+            await dbContext.SaveChangesAsync(cancellationToken);
         }
         catch (DbUpdateConcurrencyException ex)
         {
@@ -546,9 +562,9 @@ public class EmailSyncService : IEmailSyncService
             {
                 entry.State = EntityState.Detached;
             }
-            if (_dbContext.ChangeTracker.HasChanges())
+            if (dbContext.ChangeTracker.HasChanges())
             {
-                await _dbContext.SaveChangesAsync(cancellationToken);
+                await dbContext.SaveChangesAsync(cancellationToken);
             }
         }
     }

@@ -2,6 +2,7 @@ using System.Net;
 using MailAggregator.Core.Data;
 using MailAggregator.Core.Models;
 using MailKit;
+using Microsoft.EntityFrameworkCore;
 using MimeKit;
 using Serilog;
 
@@ -187,6 +188,38 @@ public class EmailSendService : IEmailSendService
             account.EmailAddress, message.To, message.Subject);
 
         await client.DisconnectAsync(true, cancellationToken);
+
+        // Save a copy to the Sent folder (most IMAP servers don't do this automatically)
+        await AppendToSentFolderAsync(account, message, cancellationToken);
+    }
+
+    private async Task AppendToSentFolderAsync(Account account, MimeMessage message, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var sentFolder = await _dbContext.Folders
+                .FirstOrDefaultAsync(f => f.AccountId == account.Id && f.SpecialUse == SpecialFolderType.Sent, cancellationToken);
+
+            if (sentFolder == null)
+            {
+                _logger.Warning("No Sent folder found for {Email}, skipping sent copy", account.EmailAddress);
+                return;
+            }
+
+            using var imapClient = await _imapConnection.ConnectAsync(account, cancellationToken);
+            var folder = await imapClient.GetFolderAsync(sentFolder.FullName, cancellationToken);
+            await folder.OpenAsync(FolderAccess.ReadWrite, cancellationToken);
+            await folder.AppendAsync(message, MessageFlags.Seen, cancellationToken: cancellationToken);
+            await folder.CloseAsync(false, cancellationToken);
+            await imapClient.DisconnectAsync(true, cancellationToken);
+
+            _logger.Information("Saved sent email to {Folder} for {Email}", sentFolder.FullName, account.EmailAddress);
+        }
+        catch (Exception ex)
+        {
+            // Don't throw — email was already sent successfully
+            _logger.Warning(ex, "Failed to save sent email to Sent folder for {Email}", account.EmailAddress);
+        }
     }
 
     private async Task<MimeMessage?> FetchOriginalMessageAsync(Account account, EmailMessage message, CancellationToken cancellationToken)

@@ -6,13 +6,13 @@
 
 MailAggregator — Windows desktop email aggregation client, direct IMAP/SMTP, no backend.
 
-| Key | Value |
-|-----|-------|
-| Stack | C# / .NET 8 / WPF / MailKit / EF Core SQLite / WebView2 |
-| Architecture | MVVM (CommunityToolkit.Mvvm) + DI |
-| Platform | Windows x64 (Core cross-platform, Desktop Windows-only) |
-| Version | v1.0.7 |
-| Tests | 163 xUnit tests |
+| Key          | Value                                                   |
+| ------------ | ------------------------------------------------------- |
+| Stack        | C# / .NET 8 / WPF / MailKit / EF Core SQLite / WebView2 |
+| Architecture | MVVM (CommunityToolkit.Mvvm) + DI                       |
+| Platform     | Windows x64 (Core cross-platform, Desktop Windows-only) |
+| Version      | v1.0.7                                                  |
+| Tests        | 177 xUnit tests                                         |
 
 Supported providers: Gmail, Microsoft, Yahoo, AOL, Fastmail, any standard IMAP/SMTP server.
 
@@ -36,7 +36,6 @@ Supported providers: Gmail, Microsoft, Yahoo, AOL, Fastmail, any standard IMAP/S
 ├── docs-for-ai/
 │   ├── index.md                                    # This file (project index)
 │   ├── pitfalls.md                                 # Pitfalls & conventions
-│   ├── auth-methods-comparison.md                  # OAuth audit
 │   ├── thunderbird-comparison.md                   # Security audit
 │   └── chapters/                                   # Detailed documentation chapters
 │       ├── core-data.md                            # Models + Data layer
@@ -107,15 +106,15 @@ Supported providers: Gmail, Microsoft, Yahoo, AOL, Fastmail, any standard IMAP/S
     │       ├── NullToVisibilityConverter.cs         # Null → Collapsed
     │       └── FileSizeConverter.cs                 # Bytes → "1.5 MB"
     │
-    └── MailAggregator.Tests/                       # ═══ Tests (net8.0, 163 tests) ═══
+    └── MailAggregator.Tests/                       # ═══ Tests (net8.0, 177 tests) ═══
         ├── MailAggregator.Tests.csproj
-        ├── Data/MailAggregatorDbContextTests.cs                        # [13]
+        ├── Data/MailAggregatorDbContextTests.cs                        # [6]
         └── Services/
-            ├── Auth/{Credential,Password,OAuth}ServiceTests.cs         # [8+14+30]
-            ├── Discovery/AutoDiscoveryServiceTests.cs                   # [26]
-            ├── Mail/{EmailSync,ImapConnection,EmailSend}ServiceTests.cs # [8+2+20]
+            ├── Auth/{Credential,Password,OAuth}ServiceTests.cs         # [8+15+33]
+            ├── Discovery/AutoDiscoveryServiceTests.cs                   # [35]
+            ├── Mail/{EmailSync,ImapConnection,EmailSend}ServiceTests.cs # [9+4+18]
             ├── AccountManagement/AccountServiceTests.cs                 # [20]
-            └── Sync/SyncManagerTests.cs                                 # [33]
+            └── Sync/SyncManagerTests.cs                                 # [29]
 ```
 
 ## Architecture
@@ -152,25 +151,11 @@ Supported providers: Gmail, Microsoft, Yahoo, AOL, Fastmail, any standard IMAP/S
 
 ## Chapters
 
-| Chapter | File | When to read |
-|---------|------|--------------|
-| Core Data | `chapters/core-data.md` | Modifying models, DB schema, EF Core config |
-| Auth & Security | `chapters/auth.md` | Auth bugs, OAuth, encryption, credential storage |
-| Mail Services | `chapters/mail.md` | Connection, sync, send, discovery, account mgmt, concurrency |
-| Desktop UI | `chapters/desktop.md` | UI changes, ViewModels, views, styles |
-| Tests | `chapters/tests.md` | Adding/modifying tests |
-| Workflows | `chapters/workflows.md` | Understanding end-to-end flows |
-
-## Known Issues
-
-| Level | Issue | Location |
-|-------|-------|----------|
-| P0 | OAuth missing `state` param (CSRF) | `OAuthService.PrepareAuthorization()` |
-| P0 | Port allocation TOCTOU race | `OAuthService.FindFreePort()` |
-| P0 | Sent folder not saved after send | `EmailSendService` |
-| P0 | No duplicate account detection | `AccountService.AddAccountAsync()` |
-| P0 | Incomplete account deletion | `AccountService.DeleteAccountAsync()` |
-| P0 | MX parsing fails for `.co.uk`/`.co.jp` | `AutoDiscoveryService.ParseMxFromNslookup()` |
-| P0 | `nslookup` no timeout + injection risk | `AutoDiscoveryService.ResolveMxDomainAsync()` |
-| P1 | Fastmail scope error | `oauth-providers.json` |
-| P1 | Yahoo/AOL `redirectionEndpoint` unused | `OAuthService` |
+| Chapter         | File                    | When to read                                                 |
+| --------------- | ----------------------- | ------------------------------------------------------------ |
+| Core Data       | `chapters/core-data.md` | Modifying models, DB schema, EF Core config                  |
+| Auth & Security | `chapters/auth.md`      | Auth bugs, OAuth, encryption, credential storage             |
+| Mail Services   | `chapters/mail.md`      | Connection, sync, send, discovery, account mgmt, concurrency |
+| Desktop UI      | `chapters/desktop.md`   | UI changes, ViewModels, views, styles                        |
+| Tests           | `chapters/tests.md`     | Adding/modifying tests                                       |
+| Workflows       | `chapters/workflows.md` | Understanding end-to-end flows                               |

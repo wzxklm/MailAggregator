@@ -5,22 +5,22 @@
 **File**: `src/MailAggregator.Tests/MailAggregator.Tests.csproj`
 - xUnit 2.5.3 + Moq 4.20.72 + FluentAssertions 8.8.0
 - coverlet.collector 6.0.0
-- 163 tests, all passing
+- 177 tests, all passing
 
 ## Test Files
 
 | Test File | Count | Target |
 |-----------|-------|--------|
-| `Data/MailAggregatorDbContextTests.cs` | 13 | EF Core models, relations, cascade delete, unique indexes |
+| `Data/MailAggregatorDbContextTests.cs` | 6 | EF Core models, relations, cascade delete, unique indexes |
 | `Services/Auth/CredentialEncryptionServiceTests.cs` | 8 | AES-256-GCM encrypt/decrypt, nonce randomness, tamper detection |
-| `Services/Auth/PasswordAuthServiceTests.cs` | 14 | Password store/retrieve/clear, input validation |
-| `Services/Auth/OAuthServiceTests.cs` | 30 | PKCE flow, provider matching, token exchange/refresh |
-| `Services/Discovery/AutoDiscoveryServiceTests.cs` | 26 | 5-level fallback, XML parsing, MX extraction, error recovery |
-| `Services/Mail/EmailSyncServiceTests.cs` | 8 | SPECIAL-USE attribute mapping |
-| `Services/Mail/ImapConnectionServiceTests.cs` | 2 | Encryption type mapping (SecureSocketOptions) |
-| `Services/Mail/EmailSendServiceTests.cs` | 20 | Quote reply, forward body, attachment building, MimeMessage |
-| `Services/AccountManagement/AccountServiceTests.cs` | 20 | Account CRUD, auto-discovery, OAuth detection, connection validation |
-| `Services/Sync/SyncManagerTests.cs` | 33 | IDLE lifecycle, exponential backoff, events, graceful shutdown |
+| `Services/Auth/PasswordAuthServiceTests.cs` | 15 | Password store/retrieve/clear, input validation |
+| `Services/Auth/OAuthServiceTests.cs` | 33 | PKCE flow, provider matching, token exchange/refresh, state parameter uniqueness |
+| `Services/Discovery/AutoDiscoveryServiceTests.cs` | 35 | 5-level fallback, XML parsing, MX extraction, ccSLD handling, error recovery |
+| `Services/Mail/EmailSyncServiceTests.cs` | 9 | SPECIAL-USE attribute mapping |
+| `Services/Mail/ImapConnectionServiceTests.cs` | 4 | Encryption type mapping (SecureSocketOptions) |
+| `Services/Mail/EmailSendServiceTests.cs` | 18 | Quote reply, forward body, attachment building, MimeMessage |
+| `Services/AccountManagement/AccountServiceTests.cs` | 20 | Account CRUD, auto-discovery, OAuth detection, duplicate detection, deletion cleanup |
+| `Services/Sync/SyncManagerTests.cs` | 29 | IDLE lifecycle, exponential backoff, events, graceful shutdown |
 
 ## Test Patterns
 

@@ -360,6 +360,40 @@ public class AutoDiscoveryServiceTests
         AutoDiscoveryService.ParseMxFromNslookup(null!).Should().BeNull();
     }
 
+    [Theory]
+    [InlineData("mx1.mail.yahoo.co.uk.", "yahoo.co.uk")]
+    [InlineData("mail.example.co.jp.", "example.co.jp")]
+    [InlineData("smtp.provider.com.cn.", "provider.com.cn")]
+    [InlineData("mx.host.com.au.", "host.com.au")]
+    public void ParseMxFromNslookup_CountryTwoLevelTld_ExtractsCorrectDomain(string mxHost, string expected)
+    {
+        var output = $"""
+            Server:  8.8.8.8
+            Address: 8.8.8.8#53
+
+            Non-authoritative answer:
+            example.com	mail exchanger = 10 {mxHost}
+            """;
+
+        var domain = AutoDiscoveryService.ParseMxFromNslookup(output);
+        domain.Should().Be(expected);
+    }
+
+    [Fact]
+    public void ParseMxFromNslookup_RegularTld_StillWorks()
+    {
+        var output = """
+            Server:  8.8.8.8
+            Address: 8.8.8.8#53
+
+            Non-authoritative answer:
+            example.com	mail exchanger = 10 mx.mailprovider.com.
+            """;
+
+        var domain = AutoDiscoveryService.ParseMxFromNslookup(output);
+        domain.Should().Be("mailprovider.com");
+    }
+
     #endregion
 
     #region Cancellation

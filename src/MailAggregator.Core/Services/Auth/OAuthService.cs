@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
@@ -25,6 +26,13 @@ public class OAuthService : IOAuthService
     private readonly ICredentialEncryptionService _encryptionService;
     private readonly ILogger _logger;
     private readonly List<OAuthProviderConfig> _providers;
+
+    /// <summary>
+    /// Pre-started listeners keyed by port. Eliminates the TOCTOU race between
+    /// finding a free port and binding the HttpListener.
+    /// Also stores the OAuth state parameter for CSRF validation.
+    /// </summary>
+    private readonly ConcurrentDictionary<int, (HttpListener Listener, string State)> _pendingListeners = new();
 
     public OAuthService(
         HttpClient httpClient,
@@ -55,7 +63,12 @@ public class OAuthService : IOAuthService
     {
         ArgumentNullException.ThrowIfNull(provider);
 
-        var listenerPort = FindFreePort();
+        // Clean up any orphaned listeners from previously abandoned OAuth flows
+        CleanupPendingListeners();
+
+        // Start the HttpListener immediately to eliminate the TOCTOU race
+        // where a malicious process could steal the port between discovery and binding.
+        var (listener, listenerPort) = StartListenerOnFreePort();
 
         // Use provider's RedirectionEndpoint if configured, otherwise default to http://localhost
         string redirectUri;
@@ -69,12 +82,16 @@ public class OAuthService : IOAuthService
             redirectUri = $"http://localhost:{listenerPort}/";
         }
 
+        // Generate CSRF-protection state parameter (RFC 6749 Section 10.12)
+        var state = GenerateState();
+
         var queryParams = new Dictionary<string, string>
         {
             ["client_id"] = provider.ClientId,
             ["response_type"] = "code",
             ["redirect_uri"] = redirectUri,
-            ["scope"] = string.Join(" ", provider.Scopes)
+            ["scope"] = string.Join(" ", provider.Scopes),
+            ["state"] = state
         };
 
         // Only include PKCE parameters when the provider requires it
@@ -100,6 +117,9 @@ public class OAuthService : IOAuthService
 
         var authorizationUrl = $"{provider.AuthorizationEndpoint}?{queryString}";
 
+        // Store the pre-started listener and state for WaitForAuthorizationCodeAsync
+        _pendingListeners[listenerPort] = (listener, state);
+
         _logger.Information("Prepared OAuth authorization for {Provider} on port {Port}, PKCE={UsePKCE}", provider.Name, listenerPort, provider.UsePKCE);
 
         return (authorizationUrl, codeVerifier, listenerPort, redirectUri);
@@ -108,12 +128,17 @@ public class OAuthService : IOAuthService
     /// <inheritdoc />
     public async Task<string> WaitForAuthorizationCodeAsync(int listenerPort, CancellationToken cancellationToken = default)
     {
-        var prefix = $"http://localhost:{listenerPort}/";
-        using var listener = new HttpListener();
-        listener.Prefixes.Add(prefix);
-        listener.Start();
+        // Retrieve the pre-started listener (created in PrepareAuthorization)
+        if (!_pendingListeners.TryRemove(listenerPort, out var pending))
+        {
+            throw new InvalidOperationException(
+                $"No pending OAuth listener found for port {listenerPort}. Call PrepareAuthorization first.");
+        }
 
-        _logger.Information("Listening for OAuth callback on {Prefix}", prefix);
+        using var listener = pending.Listener;
+        var expectedState = pending.State;
+
+        _logger.Information("Waiting for OAuth callback on port {Port}", listenerPort);
 
         try
         {
@@ -121,6 +146,17 @@ public class OAuthService : IOAuthService
             using var registration = cancellationToken.Register(() => listener.Stop());
 
             var context = await listener.GetContextAsync().ConfigureAwait(false);
+
+            // Validate state parameter to prevent CSRF attacks (RFC 6749 Section 10.12)
+            var callbackState = context.Request.QueryString["state"];
+            if (!string.Equals(callbackState, expectedState, StringComparison.Ordinal))
+            {
+                _logger.Error("OAuth state mismatch: expected {Expected}, received {Received}. Possible CSRF attack.",
+                    expectedState, callbackState ?? "(null)");
+                await SendResponseAsync(context.Response, "Authorization failed: invalid state parameter.").ConfigureAwait(false);
+                throw new InvalidOperationException("OAuth state parameter mismatch — possible CSRF attack.");
+            }
+
             var code = context.Request.QueryString["code"];
 
             if (string.IsNullOrEmpty(code))
@@ -256,13 +292,64 @@ public class OAuthService : IOAuthService
             .Replace('/', '_');
     }
 
-    private static int FindFreePort()
+    /// <summary>
+    /// Disposes any orphaned HttpListeners from abandoned OAuth flows.
+    /// </summary>
+    private void CleanupPendingListeners()
     {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        listener.Stop();
-        return port;
+        foreach (var key in _pendingListeners.Keys)
+        {
+            if (_pendingListeners.TryRemove(key, out var pending))
+            {
+                try { pending.Listener.Close(); }
+                catch { /* best effort */ }
+                _logger.Debug("Cleaned up orphaned OAuth listener on port {Port}", key);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Generates a cryptographically random state parameter for CSRF protection.
+    /// </summary>
+    internal static string GenerateState()
+    {
+        return Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
+    }
+
+    /// <summary>
+    /// Atomically finds a free port and starts an HttpListener on it.
+    /// Retries on port conflicts to eliminate the TOCTOU race condition.
+    /// </summary>
+    private static (HttpListener Listener, int Port) StartListenerOnFreePort()
+    {
+        const int maxAttempts = 10;
+        for (int attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            // Use TcpListener to discover a free port
+            int port;
+            using (var tcp = new TcpListener(IPAddress.Loopback, 0))
+            {
+                tcp.Start();
+                port = ((IPEndPoint)tcp.LocalEndpoint).Port;
+                tcp.Stop();
+            }
+
+            // Immediately start HttpListener on the discovered port;
+            // retry if another process grabbed it in the (tiny) gap
+            var listener = new HttpListener();
+            listener.Prefixes.Add($"http://localhost:{port}/");
+            try
+            {
+                listener.Start();
+                return (listener, port);
+            }
+            catch (HttpListenerException)
+            {
+                listener.Close();
+            }
+        }
+
+        throw new InvalidOperationException("Could not find a free port for OAuth callback listener.");
     }
 
     private OAuthTokenResult ParseTokenResponse(string responseBody)

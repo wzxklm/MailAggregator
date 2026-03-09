@@ -3,6 +3,7 @@ using MailAggregator.Core.Models;
 using MailAggregator.Core.Services.Auth;
 using MailAggregator.Core.Services.Discovery;
 using MailAggregator.Core.Services.Mail;
+using MailAggregator.Core.Services.Sync;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 
@@ -15,6 +16,8 @@ public class AccountService : IAccountService
     private readonly IOAuthService _oAuthService;
     private readonly IPasswordAuthService _passwordAuthService;
     private readonly IImapConnectionService _imapConnectionService;
+    private readonly ISyncManager _syncManager;
+    private readonly IImapConnectionPool _connectionPool;
     private readonly ILogger _logger;
 
     public AccountService(
@@ -23,6 +26,8 @@ public class AccountService : IAccountService
         IOAuthService oAuthService,
         IPasswordAuthService passwordAuthService,
         IImapConnectionService imapConnectionService,
+        ISyncManager syncManager,
+        IImapConnectionPool connectionPool,
         ILogger logger)
     {
         _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
@@ -30,6 +35,8 @@ public class AccountService : IAccountService
         _oAuthService = oAuthService ?? throw new ArgumentNullException(nameof(oAuthService));
         _passwordAuthService = passwordAuthService ?? throw new ArgumentNullException(nameof(passwordAuthService));
         _imapConnectionService = imapConnectionService ?? throw new ArgumentNullException(nameof(imapConnectionService));
+        _syncManager = syncManager ?? throw new ArgumentNullException(nameof(syncManager));
+        _connectionPool = connectionPool ?? throw new ArgumentNullException(nameof(connectionPool));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -39,6 +46,16 @@ public class AccountService : IAccountService
             throw new ArgumentException("Email address cannot be null or empty.", nameof(emailAddress));
 
         _logger.Information("Adding account for {EmailAddress}", emailAddress);
+
+        // Step 0: Check for duplicate account
+        var exists = await _dbContext.Accounts
+            .AnyAsync(a => a.EmailAddress == emailAddress, cancellationToken);
+        if (exists)
+        {
+            _logger.Warning("Duplicate account detected for {EmailAddress}", emailAddress);
+            throw new InvalidOperationException(
+                $"An account with email '{emailAddress}' already exists.");
+        }
 
         // Step 1: Auto-discover server configuration
         var serverConfig = await _autoDiscoveryService.DiscoverAsync(emailAddress, cancellationToken);
@@ -131,7 +148,6 @@ public class AccountService : IAccountService
     {
         _logger.Information("Deleting account {AccountId}", accountId);
 
-        // Cascade delete is configured in DbContext; no need to eager-load related entities
         var account = await _dbContext.Accounts
             .FirstOrDefaultAsync(a => a.Id == accountId, cancellationToken);
 
@@ -141,13 +157,41 @@ public class AccountService : IAccountService
             throw new InvalidOperationException($"Account with ID {accountId} not found.");
         }
 
-        // Step 2: Remove the account (cascade delete handles related entities)
-        _dbContext.Accounts.Remove(account);
+        // Step 1: Stop background sync for this account
+        await _syncManager.StopAccountSyncAsync(accountId);
 
-        // Step 3: Save changes
+        // Step 2: Release pooled IMAP connections
+        _connectionPool.RemoveAccount(accountId);
+
+        // Step 3: Clean up downloaded attachment files from disk
+        var attachmentPaths = await _dbContext.Messages
+            .Where(m => m.AccountId == accountId)
+            .SelectMany(m => m.Attachments)
+            .Where(a => a.LocalPath != null)
+            .Select(a => a.LocalPath!)
+            .ToListAsync(cancellationToken);
+
+        foreach (var path in attachmentPaths)
+        {
+            try
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                    _logger.Debug("Deleted attachment file {Path}", path);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "Failed to delete attachment file {Path}", path);
+            }
+        }
+
+        // Step 4: Remove the account (cascade delete handles DB entities)
+        _dbContext.Accounts.Remove(account);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
-        _logger.Information("Account {AccountId} ({EmailAddress}) deleted successfully",
+        _logger.Information("Account {AccountId} ({EmailAddress}) deleted successfully with resource cleanup",
             accountId, account.EmailAddress);
     }
 

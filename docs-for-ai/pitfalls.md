@@ -6,7 +6,7 @@
 
 ## EF Core / 数据库
 
-- **DbContext 非线程安全**：禁止 `Task.Run(() => query.ToList())`，必须用 `ToListAsync()`。DbContext 不能跨线程共享，用 `IDbContextFactory` 创建 scoped 实例
+- **DbContext 非线程安全**：禁止 `Task.Run(() => query.ToList())`，必须用 `ToListAsync()`。DbContext 不能跨线程共享，后台服务（如 `EmailSyncService`）必须用 `IDbContextFactory` 创建 scoped 实例，UI 层 scoped 服务可直接注入
 - **并发冲突**：从一个 DbContext 查出的实体不能 Attach 到另一个，会抛 tracking 异常。`SaveChangesSafeAsync()` 处理此场景：分离旧实体并重试
 - **批量保存**：大量消息同步时每 50 条保存一次，避免 pending changes 过多导致内存飙升
 
@@ -32,6 +32,12 @@
 - **UI 线程更新**：后台事件回调中修改 ObservableCollection 必须用 `Dispatcher.Invoke()` 切到 UI 线程
 - **Desktop 项目需要 `UseWindowsForms=true`**：NotifyIcon（Toast 通知）依赖 WinForms，csproj 中必须启用
 
+## 邮件发现 & 同步
+
+- **MX 域名提取须处理 ccSLD**：`co.uk`、`com.au` 等 country-code second-level domain 需要取 3 级域名（如 `yahoo.co.uk`），否则会提取到无意义的 `co.uk`。参见 `TwoLevelTlds` HashSet
+- **nslookup 必须有超时**：使用 `CancellationTokenSource.CreateLinkedTokenSource` + `CancelAfter(10s)`，超时后 `Kill()` 进程
+- **删除账户须清理运行时资源**：先停后台同步（`StopAccountSyncAsync`）、释放连接池（`RemoveAccount`）、删磁盘附件，最后才删数据库记录
+
 ## 架构约定
 
 - **共享连接逻辑放 `MailConnectionHelper`**：认证、代理配置、加密类型映射等逻辑集中在此 internal static 类，不要在 ImapConnectionService / SmtpConnectionService 中重复实现
@@ -43,6 +49,10 @@
 - **敏感数据必须加密存储**：密码、AccessToken、RefreshToken 存入数据库前必须经过 `CredentialEncryptionService`（AES-256-GCM）加密，绝不存明文
 - **加密密钥通过 DPAPI 保护**：生产环境用 `DpapiKeyProtector`（Windows CurrentUser 作用域），开发/测试环境用 `DevKeyProtector`（直通，不安全）
 - **WebView2 安全配置**：禁用脚本、禁用右键菜单、阻止外部导航和资源加载（防追踪）
+- **OAuth state 参数**：必须用 `RandomNumberGenerator` 生成随机 state 并在回调中验证，防 CSRF（RFC 6749 §10.12）
+- **外部命令注入防护**：传给 `nslookup` 等外部进程的域名必须用 `ValidDomainRegex` 校验（仅允许字母数字、连字符、点号）
+- **HttpListener 资源清理**：`_pendingListeners` 中的 HttpListener 必须在新 OAuth 流开始时清理，防止abandoned flow 导致端口泄漏
+- **端口绑定 TOCTOU**：发现空闲端口后必须立即绑定（`StartListenerOnFreePort` 带重试），不能先查后绑
 
 ## 构建 & 测试
 

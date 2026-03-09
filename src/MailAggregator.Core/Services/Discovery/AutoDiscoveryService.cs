@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using MailAggregator.Core.Models;
 using Serilog;
@@ -18,6 +19,30 @@ public class AutoDiscoveryService : IAutoDiscoveryService
     private readonly ILogger _logger;
 
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan NslookupTimeout = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// Regex for validating domain names (only alphanumeric, hyphens, and dots).
+    /// Prevents command injection when passing domains to nslookup.
+    /// </summary>
+    private static readonly Regex ValidDomainRegex = new(
+        @"^[a-zA-Z0-9]([a-zA-Z0-9\-\.]*[a-zA-Z0-9])?$",
+        RegexOptions.Compiled);
+
+    /// <summary>
+    /// Common country-code second-level domains (ccSLDs) where the base domain
+    /// requires three labels instead of two (e.g., "yahoo.co.uk" not "co.uk").
+    /// </summary>
+    internal static readonly HashSet<string> TwoLevelTlds = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "co.uk", "co.jp", "co.kr", "co.nz", "co.za", "co.in", "co.id", "co.il", "co.th",
+        "com.au", "com.br", "com.cn", "com.hk", "com.mx", "com.my", "com.ph", "com.sg", "com.tw", "com.vn",
+        "net.au", "net.cn", "net.nz",
+        "org.au", "org.cn", "org.nz", "org.uk",
+        "ac.uk", "gov.uk", "gov.au", "edu.au", "edu.cn",
+        "ne.jp", "or.jp", "ac.jp",
+        "com.ar", "com.co", "com.pe", "com.tr"
+    };
 
     public AutoDiscoveryService(HttpClient httpClient, ILogger logger)
     {
@@ -211,6 +236,13 @@ public class AutoDiscoveryService : IAutoDiscoveryService
     {
         try
         {
+            // Validate domain to prevent command injection
+            if (!ValidDomainRegex.IsMatch(domain))
+            {
+                _logger.Warning("Invalid domain name, skipping MX lookup: {Domain}", domain);
+                return null;
+            }
+
             _logger.Debug("Resolving MX record for {Domain}", domain);
 
             var startInfo = new System.Diagnostics.ProcessStartInfo
@@ -230,10 +262,23 @@ public class AutoDiscoveryService : IAutoDiscoveryService
                 return null;
             }
 
-            var output = await process.StandardOutput.ReadToEndAsync(cancellationToken);
-            await process.WaitForExitAsync(cancellationToken);
+            // Use a combined timeout + caller cancellation token
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(NslookupTimeout);
 
-            return ParseMxFromNslookup(output);
+            try
+            {
+                var output = await process.StandardOutput.ReadToEndAsync(timeoutCts.Token);
+                await process.WaitForExitAsync(timeoutCts.Token);
+                return ParseMxFromNslookup(output);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // Timeout (not caller cancellation) — kill the hung process
+                _logger.Warning("MX lookup timed out for {Domain}, killing nslookup process", domain);
+                try { process.Kill(); } catch { /* best effort */ }
+                return null;
+            }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -283,7 +328,14 @@ public class AutoDiscoveryService : IAutoDiscoveryService
             mxHost = mxHost.TrimEnd('.');
 
             // Extract base domain from MX hostname (e.g., "alt1.gmail-smtp-in.l.google.com" → "google.com")
+            // Handle country-code second-level domains (e.g., "mx.mail.yahoo.co.uk" → "yahoo.co.uk")
             var mxParts = mxHost.Split('.');
+            if (mxParts.Length >= 3)
+            {
+                var twoLevelTld = $"{mxParts[^2]}.{mxParts[^1]}";
+                if (TwoLevelTlds.Contains(twoLevelTld))
+                    return $"{mxParts[^3]}.{mxParts[^2]}.{mxParts[^1]}";
+            }
             if (mxParts.Length >= 2)
             {
                 return $"{mxParts[^2]}.{mxParts[^1]}";

@@ -10,8 +10,9 @@
 - **Level 4**: DNS MX query → retry Level 1-3 with MX domain
 - **Level 5**: null (UI prompts manual config)
 - **XML parsing**: `ParseAutoconfigXml()` from Thunderbird-format XML
-- **MX parsing**: `nslookup` process, extract base domain
-- **Timeout**: 10s per HTTP request
+- **MX parsing**: `nslookup` process, extract base domain; handles ccSLDs (co.uk, com.au, etc.) via `TwoLevelTlds` set
+- **MX security**: `ValidDomainRegex` prevents command injection; linked `CancellationTokenSource` enforces 10s nslookup timeout with `process.Kill()` on expiry
+- **Timeout**: 10s per HTTP request, 10s per nslookup
 - **Interface**: `IAutoDiscoveryService` — `DiscoverAsync(emailAddress)`
 
 ---
@@ -57,6 +58,8 @@ Reuse IMAP connections to avoid repeated TCP+TLS+AUTH handshakes.
 
 ## Email Sync — `Services/Mail/EmailSyncService.cs`
 
+Uses `IDbContextFactory<MailAggregatorDbContext>` — each operation creates its own scoped DbContext for thread safety (background sync runs on separate threads from UI).
+
 ### Folder sync (`SyncFoldersCoreAsync`)
 - Get IMAP folder list → identify SPECIAL-USE attributes → sync to DB (add/update/delete)
 
@@ -90,6 +93,7 @@ Reuse IMAP connections to avoid repeated TCP+TLS+AUTH handshakes.
 - `SendAsync(account, to, cc, bcc, subject, body, isHtml, attachmentPaths)` — new email
 - `ReplyAsync` / `ReplyAllAsync` — set In-Reply-To / References for threading
 - `ForwardAsync` — fetch original attachments from IMAP and include
+- **Sent folder**: After sending, `AppendToSentFolderAsync` saves a copy to the IMAP Sent folder via APPEND (most servers don't auto-save). Failures are logged but don't throw (email was already sent).
 - **Quote format**: HTML uses `<blockquote>`, plaintext uses `> ` prefix
 - **MIME**: Multipart MIME + Base64 attachment encoding
 - **Interface**: `IEmailSendService`
@@ -98,12 +102,13 @@ Reuse IMAP connections to avoid repeated TCP+TLS+AUTH handshakes.
 
 ## Account Management — `Services/AccountManagement/AccountService.cs`
 
-- **AddAccountAsync(emailAddress, password?)** — 8-step flow:
-  1. AutoDiscovery → 2. Create Account entity → 3. Check OAuth provider → 4. OAuth → set AuthType=OAuth2 / 5. Password → encrypt & store → 6. Validate IMAP (password only) → 7. Save to DB
+- **AddAccountAsync(emailAddress, password?)** — flow:
+  0. Check for duplicate email (+ unique DB index on `EmailAddress`) → 1. AutoDiscovery → 2. Create Account entity → 3. Check OAuth provider → 4. OAuth → set AuthType=OAuth2 / 5. Password → encrypt & store → 6. Validate IMAP (password only) → 7. Save to DB
 - **UpdateAccountAsync** — update settings
-- **DeleteAccountAsync** — cascade delete (account + folders + messages + attachments)
+- **DeleteAccountAsync** — full cleanup: 1. Stop SyncManager for account → 2. Release ImapConnectionPool → 3. Delete attachment files from disk → 4. Cascade delete DB entities (account + folders + messages + attachments)
 - **GetAllAccountsAsync** / **GetAccountByIdAsync**
 - **ValidateConnectionAsync** — test IMAP connection
+- **Dependencies**: Injects `ISyncManager` and `IImapConnectionPool` for deletion cleanup
 - **Interface**: `IAccountService`
 
 ---
@@ -131,7 +136,7 @@ IMAP IDLE background sync orchestrator.
 |-----------|-----------|
 | IMAP pool | `ConcurrentDictionary` + `ConcurrentQueue` |
 | SyncManager | `ConcurrentDictionary.GetOrAdd()` (atomic, no TOCTOU) |
-| DB operations | `IDbContextFactory` → scoped DbContext (no cross-thread sharing) |
+| DB operations | `IDbContextFactory` → scoped DbContext per operation (EmailSyncService, ImapConnectionService, SmtpConnectionService) |
 | EF Core save | `SaveChangesSafeAsync()` — detach + retry on conflict |
 | Batch save | Every 50 messages (avoid memory bloat) |
 | UI updates | `Dispatcher.Invoke()` for UI thread |

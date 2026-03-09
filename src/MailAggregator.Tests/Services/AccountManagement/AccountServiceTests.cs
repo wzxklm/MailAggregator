@@ -5,6 +5,7 @@ using MailAggregator.Core.Services.AccountManagement;
 using MailAggregator.Core.Services.Auth;
 using MailAggregator.Core.Services.Discovery;
 using MailAggregator.Core.Services.Mail;
+using MailAggregator.Core.Services.Sync;
 using MailKit.Net.Imap;
 using Microsoft.EntityFrameworkCore;
 using Moq;
@@ -19,6 +20,8 @@ public class AccountServiceTests : IDisposable
     private readonly Mock<IOAuthService> _mockOAuth;
     private readonly Mock<IPasswordAuthService> _mockPasswordAuth;
     private readonly Mock<IImapConnectionService> _mockImapConnection;
+    private readonly Mock<ISyncManager> _mockSyncManager;
+    private readonly Mock<IImapConnectionPool> _mockConnectionPool;
     private readonly Mock<ILogger> _mockLogger;
     private readonly AccountService _service;
 
@@ -45,6 +48,8 @@ public class AccountServiceTests : IDisposable
         _mockOAuth = new Mock<IOAuthService>();
         _mockPasswordAuth = new Mock<IPasswordAuthService>();
         _mockImapConnection = new Mock<IImapConnectionService>();
+        _mockSyncManager = new Mock<ISyncManager>();
+        _mockConnectionPool = new Mock<IImapConnectionPool>();
         _mockLogger = new Mock<ILogger>();
 
         _service = new AccountService(
@@ -53,6 +58,8 @@ public class AccountServiceTests : IDisposable
             _mockOAuth.Object,
             _mockPasswordAuth.Object,
             _mockImapConnection.Object,
+            _mockSyncManager.Object,
+            _mockConnectionPool.Object,
             _mockLogger.Object);
     }
 
@@ -254,6 +261,26 @@ public class AccountServiceTests : IDisposable
             .WithParameterName("password");
     }
 
+    [Fact]
+    public async Task AddAccountAsync_DuplicateEmail_ThrowsInvalidOperationException()
+    {
+        // Arrange - pre-insert an account
+        _dbContext.Accounts.Add(new Core.Models.Account
+        {
+            EmailAddress = "duplicate@example.com",
+            ImapHost = "imap.example.com",
+            SmtpHost = "smtp.example.com"
+        });
+        await _dbContext.SaveChangesAsync();
+
+        // Act
+        var act = () => _service.AddAccountAsync("duplicate@example.com", "password");
+
+        // Assert
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*already exists*");
+    }
+
     #endregion
 
     #region UpdateAccountAsync
@@ -356,6 +383,27 @@ public class AccountServiceTests : IDisposable
         (await _dbContext.Folders.CountAsync()).Should().Be(0);
         (await _dbContext.Messages.CountAsync()).Should().Be(0);
         (await _dbContext.Attachments.CountAsync()).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task DeleteAccountAsync_StopsSyncAndReleasesPool()
+    {
+        // Arrange
+        var account = new Core.Models.Account
+        {
+            EmailAddress = "cleanup@example.com",
+            ImapHost = "imap.example.com",
+            SmtpHost = "smtp.example.com"
+        };
+        _dbContext.Accounts.Add(account);
+        await _dbContext.SaveChangesAsync();
+
+        // Act
+        await _service.DeleteAccountAsync(account.Id);
+
+        // Assert - verify cleanup methods were called
+        _mockSyncManager.Verify(x => x.StopAccountSyncAsync(account.Id), Times.Once);
+        _mockConnectionPool.Verify(x => x.RemoveAccount(account.Id), Times.Once);
     }
 
     [Fact]

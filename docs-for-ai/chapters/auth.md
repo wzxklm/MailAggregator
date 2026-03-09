@@ -33,7 +33,10 @@ Authorization Code + PKCE flow.
 - **Provider mgmt**: Loads from `oauth-providers.json`
 - `FindProviderByHost(serverHost)` — match OAuth provider by IMAP/SMTP hostname
 - `PrepareAuthorization(provider, loginHint?)` — generate auth URL, PKCE code_verifier, local port, redirect_uri
-- `WaitForAuthorizationCodeAsync(port)` — HttpListener for OAuth callback
+  - **CSRF protection**: Generates random `state` parameter (RFC 6749 Section 10.12), validated on callback
+  - **TOCTOU-safe port**: `StartListenerOnFreePort()` atomically binds HttpListener with retry loop; `CleanupPendingListeners()` disposes orphaned listeners from abandoned flows
+  - Pre-started listeners stored in `ConcurrentDictionary<int, (HttpListener, string State)>`
+- `WaitForAuthorizationCodeAsync(port)` — retrieves pre-started HttpListener, validates `state` match, extracts code
 - `ExchangeCodeForTokenAsync(provider, code, verifier, redirectUri)` — exchange code for tokens
 - `RefreshTokenAsync(provider, encryptedRefreshToken)` — refresh expired tokens (60s grace period)
 - **PKCE**: 128-char random code_verifier, S256 code_challenge (`Base64Url(SHA256(verifier))`)

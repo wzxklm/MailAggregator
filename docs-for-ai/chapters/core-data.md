@@ -68,7 +68,7 @@
 - **Type conversion**: Custom `DateTimeOffsetToLongConverter` → UTC ticks (SQLite doesn't support DateTimeOffset ORDER BY/WHERE)
 - **Auto timestamps**: `CreatedAt`/`UpdatedAt` (Account), `CachedAt` (EmailMessage)
 - **Cascade delete**: Account → Folder → Message → Attachment
-- **Unique indexes**: `(AccountId, FullName)` for MailFolder, `(FolderId, Uid)` for EmailMessage
+- **Unique indexes**: `EmailAddress` for Account, `(AccountId, FullName)` for MailFolder, `(FolderId, Uid)` for EmailMessage
 - **Key methods**: `OnModelCreating()`, `SaveChangesAsync()` (auto timestamps)
 
 ### `DatabaseInitializer.cs`
