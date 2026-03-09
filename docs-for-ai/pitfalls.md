@@ -48,7 +48,7 @@
 - **DNS 查询使用 DnsClient.NET**：不再通过 `nslookup` 进程解析 MX/SRV 记录，改用 `ILookupClient`（DnsClient 库）。构造函数接受 `ILookupClient` 便于测试注入。DNS 超时通过 `LookupClientOptions.Timeout` 配置（10s）
 - **RFC 6186 SRV 记录发现（Level 5）**：自动发现 fallback 链新增 SRV 查询（`_imaps._tcp`→`_imap._tcp`→`_submission._tcp`），SMTP SRV 查询与 IMAP 并行执行以减少延迟
 - **删除账户须清理运行时资源**：先停后台同步（`StopAccountSyncAsync`）、释放连接池（`RemoveAccount`）、清理 token 刷新锁（`RemoveTokenRefreshLock`）、删磁盘附件，最后才删数据库记录
-- **DeleteAccountAsync 须 Detach + 重新查询再删除**：方法开头加载的 Account 实体经过 sync stop 和资源清理后可能已过期（sync loop 的 DbContext 通过 factory 创建，可能修改了同一行，如 OAuth token 刷新）。直接 `Remove(account)` 会抛 `DbUpdateConcurrencyException`。修复：`Entry(account).State = Detached` → `FirstOrDefaultAsync` 重新取 → `Remove(freshAccount)`
+- **Account 实体操作前须 Detach 已跟踪实例**：长生命周期的 root-scoped DbContext 可能已跟踪同 Id 的 Account 实体（如 `AddAccountAsync` 保存后仍为 `Unchanged`）。`UpdateAccountAsync` 在调用 `Update()` 前必须查 `ChangeTracker.Entries<Account>()` 并 Detach 已跟踪实例，否则抛 "already being tracked" 异常。`DeleteAccountAsync` 同理但更复杂：sync stop 和资源清理后实体可能已过期（sync loop 的 DbContext 通过 factory 创建，可能修改了同一行，如 OAuth token 刷新），修复：`Entry(account).State = Detached` → `FirstOrDefaultAsync` 重新取 → `Remove(freshAccount)`
 - **更新账户须重启同步**：`AccountService.UpdateAccountAsync` 校验 host/port 后，若账户正在同步则自动 stop → remove pool → start，否则 SyncManager 继续用旧配置连接
 - **IMAP IDLE 不是所有服务器都支持**：进入监视循环前必须检查 `ImapCapabilities.Idle`，不支持时降级为 2 分钟轮询 + `NoOpAsync`。即使宣称支持，服务器也可能以 BAD/NO 拒绝 IDLE 命令，`IdleWaitAsync` 捕获 `ImapCommandException` 并降级为当次轮询
 - **合并 IMAP 操作减少往返**：`SyncFlagsAndDetectDeletionsAsync` 用一次 FETCH 同时完成标志同步和删除检测（服务器仅返回仍存在的 UID，缺失的即为已删除）。避免分别查询浪费带宽

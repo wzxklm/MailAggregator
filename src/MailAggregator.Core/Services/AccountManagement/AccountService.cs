@@ -160,6 +160,16 @@ public class AccountService : IAccountService
         if (account.SmtpPort <= 0 || account.SmtpPort > 65535)
             throw new ArgumentException($"SMTP port {account.SmtpPort} is out of valid range (1-65535).", nameof(account));
 
+        // Detach any existing tracked instance with the same key to avoid
+        // "already being tracked" conflict (e.g. entity from AddAccountAsync
+        // still tracked as Unchanged in the long-lived root-scoped DbContext).
+        var trackedEntry = _dbContext.ChangeTracker.Entries<Account>()
+            .FirstOrDefault(e => e.Entity.Id == account.Id);
+        if (trackedEntry != null)
+        {
+            trackedEntry.State = EntityState.Detached;
+        }
+
         _dbContext.Accounts.Update(account);
         await _dbContext.SaveChangesAsync(cancellationToken);
 

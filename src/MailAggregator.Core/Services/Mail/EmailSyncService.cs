@@ -464,6 +464,13 @@ public class EmailSyncService : IEmailSyncService
 
         message.BodyText = mimeMessage.TextBody;
         message.BodyHtml = mimeMessage.HtmlBody;
+
+        // Replace cid: references with inline data URIs so WebView2 can display them
+        if (!string.IsNullOrEmpty(message.BodyHtml))
+        {
+            message.BodyHtml = ResolveInlineImages(mimeMessage, message.BodyHtml);
+        }
+
         if (mimeMessage.References != null && mimeMessage.References.Count > 0)
             message.References = string.Join(" ", mimeMessage.References);
 
@@ -727,6 +734,40 @@ public class EmailSyncService : IEmailSyncService
                 await dbContext.SaveChangesAsync(cancellationToken);
             }
         }
+    }
+
+    /// <summary>
+    /// Replaces cid: references in HTML with inline data URIs from the MIME message's body parts.
+    /// This makes the HTML self-contained so WebView2 can render embedded images without
+    /// needing to resolve Content-ID URIs.
+    /// </summary>
+    private static string ResolveInlineImages(MimeMessage mimeMessage, string html)
+    {
+        var cidParts = mimeMessage.BodyParts.OfType<MimePart>()
+            .Where(p => !string.IsNullOrEmpty(p.ContentId) && p.Content != null)
+            .ToList();
+
+        if (cidParts.Count == 0)
+            return html;
+
+        foreach (var part in cidParts)
+        {
+            var contentId = part.ContentId!.Trim('<', '>');
+            var cidRef = $"cid:{contentId}";
+
+            if (!html.Contains(cidRef, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            using var ms = new MemoryStream();
+            part.Content!.DecodeTo(ms);
+            var base64 = Convert.ToBase64String(ms.GetBuffer(), 0, (int)ms.Length);
+            var mimeType = part.ContentType?.MimeType ?? "application/octet-stream";
+            var dataUri = $"data:{mimeType};base64,{base64}";
+
+            html = html.Replace(cidRef, dataUri, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return html;
     }
 
     private static MimePart? FindAttachmentPart(MimeMessage message, EmailAttachment attachment)

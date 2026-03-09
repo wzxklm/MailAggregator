@@ -104,7 +104,7 @@
 | `OpenAccountSettingsCommand` | Open account management |
 
 **Email selection flow**: `SelectedEmail` change → `LoadFullMessageAndMarkReadAsync()`:
-1. Query body from DB (if cached) → 2. If not cached → `FetchMessageBodyAsync()` from IMAP → 3. Fill BodyHtml/BodyText + Attachments → 4. Auto mark read
+1. Query body from DB (if cached) → 2. If not cached, or if cached HTML contains unresolved `cid:` references (legacy data from before inline image resolution) → `FetchMessageBodyAsync()` from IMAP → 3. Fill BodyHtml/BodyText + Attachments → 4. Auto mark read
 
 **New email event**: `OnNewEmailsReceived()` → UI thread → Toast notification → insert at list top
 

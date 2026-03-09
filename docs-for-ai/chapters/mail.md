@@ -98,6 +98,7 @@ Uses `IDbContextFactory<MailAggregatorDbContext>` — each operation creates its
 - `MoveMessageAsync` — server-side move
 - `DeleteMessageAsync` — move to Trash
 - `FetchMessageBodyAsync` — lazy-fetch full body + attachment metadata
+- `ResolveInlineImages` (private static) — during body parsing, replaces `cid:` references in HTML with inline `data:` URIs from the MIME message's `BodyParts`. Finds `MimePart` entries with a `ContentId`, Base64-encodes the content, and substitutes `cid:{contentId}` with `data:{mimeType};base64,{data}`. Makes HTML self-contained so WebView2 can render embedded images without resolving Content-ID URIs
 
 ### Concurrency
 - **Per-folder sync lock**: `ConcurrentDictionary<int, SemaphoreSlim>` (`_folderSyncLocks`) prevents concurrent `SyncInitialAsync`/`SyncIncrementalAsync` on the same folder. Lock acquired in public methods; internal `SyncInitialCoreAsync`/`SyncIncrementalCoreAsync` are lock-free (caller holds lock). UIDVALIDITY change path calls `SyncInitialCoreAsync(account, folder, client, ct)` directly to avoid deadlock and reuse the caller's IMAP connection
@@ -123,7 +124,7 @@ Uses `IDbContextFactory<MailAggregatorDbContext>` — each operation creates its
 
 - **AddAccountAsync(emailAddress, password?)** — flow:
   0. Check for duplicate email (+ unique DB index on `EmailAddress`) → 1. AutoDiscovery → 2. Create Account entity → 3. Check OAuth provider → 4. OAuth → set AuthType=OAuth2 / 5. Password → encrypt & store → 6. Validate IMAP (password only) → 7. Save to DB within explicit transaction (rollback on failure to prevent orphaned OAuth accounts)
-- **UpdateAccountAsync** — validates host/port (non-empty host, port 1-65535 for both IMAP and SMTP), saves to DB, then restarts sync if the account is currently syncing (stop → remove pool connections → start with new config)
+- **UpdateAccountAsync** — validates host/port (non-empty host, port 1-65535 for both IMAP and SMTP). Before calling `Update()`, detaches any existing tracked Account entity from the ChangeTracker to avoid "already being tracked" conflicts (same pattern as `DeleteAccountAsync`). Saves to DB, then restarts sync if the account is currently syncing (stop → remove pool connections → start with new config)
 - **DeleteAccountAsync** — full cleanup: 1. Stop SyncManager for account → 2. Release ImapConnectionPool → 3. Remove token refresh lock (`MailConnectionHelper.RemoveTokenRefreshLock`) → 4. Delete attachment files from disk → 5. Detach the initially-loaded account entity and re-fetch fresh before deletion (the sync loop uses its own DbContext and may have modified the account row, e.g. OAuth token refresh, causing stale tracking state → `DbUpdateConcurrencyException`) → 6. Cascade delete DB entities (account + folders + messages + attachments). If re-fetch returns null the account was already deleted; method returns early
 - **GetAllAccountsAsync** / **GetAccountByIdAsync** (both use `AsNoTracking` for consistency)
 - **ValidateConnectionAsync** — test IMAP connection

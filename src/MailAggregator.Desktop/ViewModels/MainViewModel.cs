@@ -414,8 +414,14 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
             if (fullMessage != null)
             {
-                // If body not cached yet, fetch from IMAP on demand
-                if (fullMessage.BodyHtml == null && fullMessage.BodyText == null)
+                // Fetch from IMAP if body not cached yet, or if cached HTML still
+                // contains unresolved cid: references (from before inline image resolution was added)
+                var hasUnresolvedCid = fullMessage.BodyHtml != null
+                    && (fullMessage.BodyHtml.Contains("src=\"cid:", StringComparison.OrdinalIgnoreCase)
+                        || fullMessage.BodyHtml.Contains("src='cid:", StringComparison.OrdinalIgnoreCase));
+                var needsFetch = (fullMessage.BodyHtml == null && fullMessage.BodyText == null)
+                    || hasUnresolvedCid;
+                if (needsFetch)
                 {
                     var account = FindAccountById(listMessage.AccountId);
                     if (account != null)
