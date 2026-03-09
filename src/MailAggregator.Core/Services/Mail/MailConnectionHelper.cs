@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using MailAggregator.Core.Models;
 using MailAggregator.Core.Services.Auth;
 using MailKit;
+using MailKit.Net.Imap;
 using MailKit.Net.Proxy;
 using MailKit.Security;
 using Serilog;
@@ -34,6 +35,20 @@ internal static class MailConnectionHelper
     {
         if (_tokenRefreshLocks.TryRemove(accountId, out var semaphore))
             semaphore.Dispose();
+    }
+
+    /// <summary>
+    /// Detects non-transient auth/access errors in IMAP NO responses.
+    /// Providers like 163.com (NetEase) return NO with "Unsafe Login" when an
+    /// authorization code is required instead of the regular password.
+    /// These errors should stop the sync loop rather than trigger retries.
+    /// </summary>
+    internal static bool IsNonTransientAuthError(ImapCommandException ex)
+    {
+        var msg = ex.ResponseText ?? ex.Message;
+        return msg.Contains("Unsafe Login", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("Authentication", StringComparison.OrdinalIgnoreCase)
+            || msg.Contains("LOGIN", StringComparison.OrdinalIgnoreCase);
     }
 
     internal static SecureSocketOptions GetSecureSocketOptions(ConnectionEncryptionType encryption) => encryption switch

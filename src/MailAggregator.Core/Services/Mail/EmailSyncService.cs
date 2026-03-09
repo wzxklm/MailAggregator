@@ -149,7 +149,7 @@ public class EmailSyncService : IEmailSyncService
 
         if (uids.Count > 0)
         {
-            await FetchAndCacheMessagesAsync(imapFolder, folder, account, uids, dbContext, cancellationToken);
+            _ = await FetchAndCacheMessagesAsync(imapFolder, folder, account, uids, dbContext, cancellationToken);
             folder.MaxUid = uids.Max(u => u.Id);
         }
 
@@ -208,6 +208,15 @@ public class EmailSyncService : IEmailSyncService
         }
         catch (ImapCommandException ex) when (ex.Response == ImapCommandResponse.No)
         {
+            // Distinguish auth/access errors from genuinely non-selectable folders.
+            // Re-throw so SyncManager can stop the sync loop instead of deleting the folder.
+            if (MailConnectionHelper.IsNonTransientAuthError(ex))
+            {
+                _logger.Warning("Folder {Folder} access denied for {Email}: {Reason}",
+                    folder.FullName, account.EmailAddress, ex.ResponseText ?? ex.Message);
+                throw;
+            }
+
             _logger.Warning("Folder {Folder} is not selectable for {Email}, removing from local cache",
                 folder.FullName, account.EmailAddress);
             dbContext.Folders.Remove(folder);
@@ -235,6 +244,14 @@ public class EmailSyncService : IEmailSyncService
             return;
         }
 
+        // Refresh MaxUid from DB in case another sync caller updated it
+        var dbMaxUid = await dbContext.Folders
+            .Where(f => f.Id == folder.Id)
+            .Select(f => f.MaxUid)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (dbMaxUid > folder.MaxUid)
+            folder.MaxUid = dbMaxUid;
+
         // Fetch new messages (UID > MaxUid)
         if (folder.MaxUid > 0)
         {
@@ -243,11 +260,14 @@ public class EmailSyncService : IEmailSyncService
 
             if (uids.Count > 0)
             {
-                _logger.Information("Incremental sync: {Count} new messages in {Folder} for {Email}",
-                    uids.Count, folder.FullName, account.EmailAddress);
-
-                await FetchAndCacheMessagesAsync(imapFolder, folder, account, uids, dbContext, cancellationToken);
+                var actualNew = await FetchAndCacheMessagesAsync(imapFolder, folder, account, uids, dbContext, cancellationToken);
                 folder.MaxUid = uids.Max(u => u.Id);
+
+                if (actualNew > 0)
+                {
+                    _logger.Information("Incremental sync: {Count} new messages in {Folder} for {Email}",
+                        actualNew, folder.FullName, account.EmailAddress);
+                }
             }
         }
 
@@ -489,7 +509,7 @@ public class EmailSyncService : IEmailSyncService
             message.Uid, folder.FullName, account.EmailAddress);
     }
 
-    private async Task FetchAndCacheMessagesAsync(
+    private async Task<int> FetchAndCacheMessagesAsync(
         IMailFolder imapFolder,
         LocalMailFolder localFolder,
         Account account,
@@ -504,7 +524,7 @@ public class EmailSyncService : IEmailSyncService
         var existingUids = existingUidList.ToHashSet();
 
         var newUids = uids.Where(u => !existingUids.Contains(u.Id)).ToList();
-        if (newUids.Count == 0) return;
+        if (newUids.Count == 0) return 0;
 
         // Fetch summaries first
         var summaryItems = MessageSummaryItems.UniqueId
@@ -516,6 +536,7 @@ public class EmailSyncService : IEmailSyncService
         var summaries = await imapFolder.FetchAsync(newUids, summaryItems, cancellationToken);
         const int batchSize = 50;
         int processedInBatch = 0;
+        int totalInserted = 0;
 
         foreach (var summary in summaries)
         {
@@ -547,6 +568,7 @@ public class EmailSyncService : IEmailSyncService
 
             dbContext.Messages.Add(emailMessage);
             processedInBatch++;
+            totalInserted++;
 
             if (processedInBatch >= batchSize)
             {
@@ -557,6 +579,8 @@ public class EmailSyncService : IEmailSyncService
 
         if (processedInBatch > 0)
             await SaveChangesSafeAsync(dbContext, cancellationToken);
+
+        return totalInserted;
     }
 
     /// <summary>

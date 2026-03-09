@@ -45,6 +45,7 @@
 - **DNS 查询使用 DnsClient.NET**：不再通过 `nslookup` 进程解析 MX/SRV 记录，改用 `ILookupClient`（DnsClient 库）。构造函数接受 `ILookupClient` 便于测试注入。DNS 超时通过 `LookupClientOptions.Timeout` 配置（10s）
 - **RFC 6186 SRV 记录发现（Level 5）**：自动发现 fallback 链新增 SRV 查询（`_imaps._tcp`→`_imap._tcp`→`_submission._tcp`），SMTP SRV 查询与 IMAP 并行执行以减少延迟
 - **删除账户须清理运行时资源**：先停后台同步（`StopAccountSyncAsync`）、释放连接池（`RemoveAccount`）、清理 token 刷新锁（`RemoveTokenRefreshLock`）、删磁盘附件，最后才删数据库记录
+- **DeleteAccountAsync 须 Detach + 重新查询再删除**：方法开头加载的 Account 实体经过 sync stop 和资源清理后可能已过期（sync loop 的 DbContext 通过 factory 创建，可能修改了同一行，如 OAuth token 刷新）。直接 `Remove(account)` 会抛 `DbUpdateConcurrencyException`。修复：`Entry(account).State = Detached` → `FirstOrDefaultAsync` 重新取 → `Remove(freshAccount)`
 - **更新账户须重启同步**：`AccountService.UpdateAccountAsync` 校验 host/port 后，若账户正在同步则自动 stop → remove pool → start，否则 SyncManager 继续用旧配置连接
 - **IMAP IDLE 不是所有服务器都支持**：进入监视循环前必须检查 `ImapCapabilities.Idle`，不支持时降级为 2 分钟轮询 + `NoOpAsync`。即使宣称支持，服务器也可能以 BAD/NO 拒绝 IDLE 命令，`IdleWaitAsync` 捕获 `ImapCommandException` 并降级为当次轮询
 - **合并 IMAP 操作减少往返**：`SyncFlagsAndDetectDeletionsAsync` 用一次 FETCH 同时完成标志同步和删除检测（服务器仅返回仍存在的 UID，缺失的即为已删除）。避免分别查询浪费带宽
@@ -56,7 +57,7 @@
 
 ## 架构约定
 
-- **共享连接逻辑放 `MailConnectionHelper`**：认证、代理配置、加密类型映射等逻辑集中在此 internal static 类，不要在 ImapConnectionService / SmtpConnectionService 中重复实现
+- **共享连接逻辑放 `MailConnectionHelper`**：认证、代理配置、加密类型映射等逻辑集中在此 internal static 类，不要在 ImapConnectionService / SmtpConnectionService 中重复实现。非瞬态认证错误检测（`IsNonTransientAuthError`）也集中在此类，`SyncManager` 和 `EmailSyncService` 统一调用，不要在各处内联关键字匹配
 - **新服务必须注册 DI + 定义接口**：在 `App.xaml.cs` 的 `ServiceCollection` 中注册，且必须有对应的 `I` 前缀接口
 - **测试文件镜像 Core 目录结构**：`MailAggregator.Tests/Services/` 下的目录结构与 `MailAggregator.Core/Services/` 一一对应
 

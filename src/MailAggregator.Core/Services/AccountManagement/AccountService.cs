@@ -222,7 +222,21 @@ public class AccountService : IAccountService
         }
 
         // Step 4: Remove the account (cascade delete handles DB entities)
-        _dbContext.Accounts.Remove(account);
+        // Detach the entity loaded at the start of this method — its tracking state
+        // may be stale after sync stop and attachment cleanup (the sync loop uses its
+        // own DbContext via factory and may have modified the account row, e.g. OAuth
+        // token refresh). Re-fetch fresh to prevent DbUpdateConcurrencyException.
+        _dbContext.Entry(account).State = EntityState.Detached;
+
+        var freshAccount = await _dbContext.Accounts
+            .FirstOrDefaultAsync(a => a.Id == accountId, cancellationToken);
+        if (freshAccount is null)
+        {
+            _logger.Information("Account {AccountId} was already deleted", accountId);
+            return;
+        }
+
+        _dbContext.Accounts.Remove(freshAccount);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         _logger.Information("Account {AccountId} ({EmailAddress}) deleted successfully with resource cleanup",

@@ -293,9 +293,7 @@ public class SyncManager : ISyncManager, IDisposable
                     account.Id, account.EmailAddress);
                 break;
             }
-            catch (ImapCommandException ex) when (ex.Message.Contains("Unsafe Login", StringComparison.OrdinalIgnoreCase)
-                || ex.Message.Contains("Authentication", StringComparison.OrdinalIgnoreCase)
-                || ex.Message.Contains("LOGIN", StringComparison.OrdinalIgnoreCase))
+            catch (ImapCommandException ex) when (MailConnectionHelper.IsNonTransientAuthError(ex))
             {
                 _logger.Error(ex, "Non-transient auth/access error for account {AccountId} ({Email}). Stopping sync — check credentials or authorization code",
                     account.Id, account.EmailAddress);

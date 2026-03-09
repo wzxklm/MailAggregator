@@ -32,6 +32,7 @@ Shared logic for all IMAP/SMTP connections (internal static).
   - Password: decrypt → plaintext auth
 - **Token refresh concurrency protection**: Per-account `SemaphoreSlim` (stored in `ConcurrentDictionary<int, SemaphoreSlim>`) prevents IMAP and SMTP from refreshing the same account's token simultaneously. Uses double-check pattern: re-checks expiry after acquiring lock in case another caller already refreshed
 - `RemoveTokenRefreshLock(accountId)` — disposes and removes the semaphore for a deleted account (called by `AccountService.DeleteAccountAsync` to prevent memory leaks)
+- `IsNonTransientAuthError(ImapCommandException)` — detects non-transient auth/access errors in IMAP NO responses by checking for "Unsafe Login", "Authentication", or "LOGIN" keywords. Used by `SyncManager` catch block and `EmailSyncService` folder-open error handling to stop the sync loop rather than retrying or incorrectly deleting the folder
 
 ## IMAP Connection — `Services/Mail/ImapConnectionService.cs`
 
@@ -121,7 +122,7 @@ Uses `IDbContextFactory<MailAggregatorDbContext>` — each operation creates its
 - **AddAccountAsync(emailAddress, password?)** — flow:
   0. Check for duplicate email (+ unique DB index on `EmailAddress`) → 1. AutoDiscovery → 2. Create Account entity → 3. Check OAuth provider → 4. OAuth → set AuthType=OAuth2 / 5. Password → encrypt & store → 6. Validate IMAP (password only) → 7. Save to DB within explicit transaction (rollback on failure to prevent orphaned OAuth accounts)
 - **UpdateAccountAsync** — validates host/port (non-empty host, port 1-65535 for both IMAP and SMTP), saves to DB, then restarts sync if the account is currently syncing (stop → remove pool connections → start with new config)
-- **DeleteAccountAsync** — full cleanup: 1. Stop SyncManager for account → 2. Release ImapConnectionPool → 3. Remove token refresh lock (`MailConnectionHelper.RemoveTokenRefreshLock`) → 4. Delete attachment files from disk → 5. Cascade delete DB entities (account + folders + messages + attachments)
+- **DeleteAccountAsync** — full cleanup: 1. Stop SyncManager for account → 2. Release ImapConnectionPool → 3. Remove token refresh lock (`MailConnectionHelper.RemoveTokenRefreshLock`) → 4. Delete attachment files from disk → 5. Detach the initially-loaded account entity and re-fetch fresh before deletion (the sync loop uses its own DbContext and may have modified the account row, e.g. OAuth token refresh, causing stale tracking state → `DbUpdateConcurrencyException`) → 6. Cascade delete DB entities (account + folders + messages + attachments). If re-fetch returns null the account was already deleted; method returns early
 - **GetAllAccountsAsync** / **GetAccountByIdAsync** (both use `AsNoTracking` for consistency)
 - **ValidateConnectionAsync** — test IMAP connection
 - **Dependencies**: Injects `ISyncManager` and `IImapConnectionPool` for deletion cleanup
