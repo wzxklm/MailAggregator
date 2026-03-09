@@ -37,6 +37,7 @@ Authorization Code + PKCE flow.
   - **TOCTOU-safe port**: `StartListenerOnFreePort()` atomically binds HttpListener with retry loop; `CleanupPendingListeners()` disposes orphaned listeners from abandoned flows
   - Pre-started listeners stored in `ConcurrentDictionary<int, (HttpListener, string State)>`
 - `WaitForAuthorizationCodeAsync(port)` — retrieves pre-started HttpListener, validates `state` match, extracts code
+  - **Cancellation handling**: Catches both `ObjectDisposedException` and `HttpListenerException` during cancellation (via pattern-matching `catch (Exception ex) when ((ex is ObjectDisposedException or HttpListenerException) && cancellationToken.IsCancellationRequested)`) and converts them to `OperationCanceledException`. `listener.Stop()` triggered by cancellation token can raise either exception type depending on timing
 - `ExchangeCodeForTokenAsync(provider, code, verifier, redirectUri)` — exchange code for tokens
 - `RefreshTokenAsync(provider, encryptedRefreshToken)` — refresh expired tokens (60s grace period)
 - **PKCE**: 128-char random code_verifier, S256 code_challenge (`Base64Url(SHA256(verifier))`)

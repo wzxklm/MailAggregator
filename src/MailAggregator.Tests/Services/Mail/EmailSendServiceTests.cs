@@ -218,6 +218,56 @@ public class EmailSendServiceTests
 
     #endregion
 
+    #region Address Validation Tests
+
+    [Theory]
+    [InlineData("user@example.com")]
+    [InlineData("user@example.co.uk")]
+    [InlineData("user+tag@example.com")]
+    public void ValidateAddresses_ValidSingleAddress_DoesNotThrow(string address)
+    {
+        var act = () => EmailSendService.ParseAndValidateAddresses(address, "To");
+        act.Should().NotThrow();
+    }
+
+    [Fact]
+    public void ValidateAddresses_ValidMultipleAddresses_DoesNotThrow()
+    {
+        var act = () => EmailSendService.ParseAndValidateAddresses("a@example.com, b@example.com", "To");
+        act.Should().NotThrow();
+    }
+
+    [Theory]
+    [InlineData("1")]
+    [InlineData("abc")]
+    [InlineData("user@")]
+    public void ValidateAddresses_InvalidAddress_ThrowsArgumentException(string address)
+    {
+        var act = () => EmailSendService.ParseAndValidateAddresses(address, "To");
+        act.Should().Throw<ArgumentException>().Which.Message.Should().Contain("To");
+    }
+
+    [Fact]
+    public void ValidateAddresses_MixedValidAndInvalid_ThrowsWithInvalidListed()
+    {
+        var act = () => EmailSendService.ParseAndValidateAddresses("good@example.com, 1", "To");
+        act.Should().Throw<ArgumentException>().Which.Message.Should().Contain("1");
+    }
+
+    [Theory]
+    [InlineData("user@example.com", true)]
+    [InlineData("user@x", true)]
+    [InlineData("1", false)]
+    public void IsValidMailboxAddress_ChecksAtSignAndDomain(string address, bool expected)
+    {
+        // MimeKit rejects some malformed addresses (e.g. "user@") at construction,
+        // but accepts others (e.g. "1") — our validator catches the latter.
+        var mbox = new MimeKit.MailboxAddress(null, address);
+        EmailSendService.IsValidMailboxAddress(mbox).Should().Be(expected);
+    }
+
+    #endregion
+
     #region Edge Cases
 
     [Fact]

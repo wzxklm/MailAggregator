@@ -362,9 +362,33 @@ public class EmailSendService : IEmailSendService
 
     private static void SetRecipients(MimeMessage message, string to, string? cc, string? bcc)
     {
-        message.To.AddRange(ParseAddresses(to));
-        if (!string.IsNullOrEmpty(cc)) message.Cc.AddRange(ParseAddresses(cc));
-        if (!string.IsNullOrEmpty(bcc)) message.Bcc.AddRange(ParseAddresses(bcc));
+        message.To.AddRange(ParseAndValidateAddresses(to, "To"));
+        if (!string.IsNullOrEmpty(cc)) message.Cc.AddRange(ParseAndValidateAddresses(cc, "Cc"));
+        if (!string.IsNullOrEmpty(bcc)) message.Bcc.AddRange(ParseAndValidateAddresses(bcc, "Bcc"));
+    }
+
+    internal static InternetAddressList ParseAndValidateAddresses(string addresses, string fieldName)
+    {
+        if (!InternetAddressList.TryParse(addresses, out var list) || list.Count == 0)
+            throw new ArgumentException($"{fieldName} contains no valid email addresses: {addresses}");
+
+        var invalid = list.OfType<MailboxAddress>()
+            .Where(m => !IsValidMailboxAddress(m))
+            .Select(m => m.Address)
+            .ToList();
+
+        if (invalid.Count > 0)
+            throw new ArgumentException($"Invalid email address(es) in {fieldName}: {string.Join(", ", invalid)}");
+
+        return list;
+    }
+
+    internal static bool IsValidMailboxAddress(MailboxAddress mbox)
+    {
+        var address = mbox.Address;
+        if (string.IsNullOrEmpty(address)) return false;
+        var atIndex = address.IndexOf('@');
+        return atIndex > 0 && atIndex < address.Length - 1;
     }
 
     private static IEnumerable<InternetAddress> ParseAddresses(string addresses)

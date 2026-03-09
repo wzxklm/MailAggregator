@@ -80,11 +80,12 @@ Uses `IDbContextFactory<MailAggregatorDbContext>` — each operation creates its
 - Check UIDVALIDITY (if changed → reset cache, re-sync)
 - Fetch new messages (UID > MaxUid)
 - Sync flags and detect deletions via `SyncFlagsAndDetectDeletionsAsync` (single IMAP FETCH for both)
-- Update folder counts
+- **Folder update**: Uses `Attach` + mark individual properties (`MaxUid`, `MessageCount`, `UnreadCount`) as modified instead of `Update(folder)`, to avoid EF Core graph traversal cascading to `EmailMessage` entities via the `Messages` navigation property
 
 ### Flag sync & deletion detection (`SyncFlagsAndDetectDeletionsAsync`)
 - Single IMAP FETCH (UIDs + Flags) for all locally-known messages — server returns only UIDs that still exist
 - **Flag sync**: Updates `IsRead` (`\Seen`) and `IsFlagged` (`\Flagged`) properties when server flags differ from local
+- **Tracking-safe flag update**: Before attaching stub `EmailMessage` entities, builds a `Dictionary` from `ChangeTracker.Entries<EmailMessage>()`. If an entity is already tracked (e.g., just inserted by `FetchAndCacheMessagesAsync` in the same DbContext), updates the tracked entity directly instead of attaching a new stub — avoids `InvalidOperationException` from duplicate key tracking
 - **Deletion detection**: UIDs absent from server response are batch-deleted locally via `ExecuteDeleteAsync`
 - Replaces the former separate `SyncExistingMessageFlagsAsync` + `DetectDeletedMessagesAsync` methods
 
@@ -96,7 +97,8 @@ Uses `IDbContextFactory<MailAggregatorDbContext>` — each operation creates its
 - `FetchMessageBodyAsync` — lazy-fetch full body + attachment metadata
 
 ### Concurrency
-- `SaveChangesSafeAsync` — handle EF Core concurrency conflicts (detach old entity, retry)
+- **Per-folder sync lock**: `ConcurrentDictionary<int, SemaphoreSlim>` (`_folderSyncLocks`) prevents concurrent `SyncInitialAsync`/`SyncIncrementalAsync` on the same folder. Lock acquired in public methods; internal `SyncInitialCoreAsync`/`SyncIncrementalCoreAsync` are lock-free (caller holds lock). UIDVALIDITY change path calls `SyncInitialCoreAsync(account, folder, client, ct)` directly to avoid deadlock and reuse the caller's IMAP connection
+- `SaveChangesSafeAsync` — handles both `DbUpdateConcurrencyException` (detach + retry) and `DbUpdateException` with SQLite error code 19 (UNIQUE constraint — detach Added entries + retry) as defense-in-depth
 - **Interface**: `IEmailSyncService`
 
 ---
@@ -107,6 +109,7 @@ Uses `IDbContextFactory<MailAggregatorDbContext>` — each operation creates its
 - `ReplyAsync` / `ReplyAllAsync` — set In-Reply-To / References for threading
 - `ForwardAsync` — fetch original attachments from IMAP and include
 - **Sent folder**: After sending, `AppendToSentFolderAsync` saves a copy to the IMAP Sent folder via APPEND (most servers don't auto-save). Failures are logged but don't throw (email was already sent).
+- **Address validation**: `SetRecipients` uses `ParseAndValidateAddresses(addresses, fieldName)` which parses via `InternetAddressList.TryParse` then validates each `MailboxAddress` has `local@domain` format via `IsValidMailboxAddress`. Throws `ArgumentException` with field name and invalid addresses before reaching SMTP. Original `ParseAddresses` kept for `ReplyAllAsync` (parses stored addresses from original messages)
 - **Quote format**: HTML uses `<blockquote>`, plaintext uses `> ` prefix
 - **MIME**: Multipart MIME + Base64 attachment encoding
 - **Interface**: `IEmailSendService`
@@ -155,7 +158,8 @@ IMAP IDLE background sync orchestrator.
 | Token refresh | Per-account `SemaphoreSlim` with double-check pattern (prevents IMAP/SMTP concurrent refresh) |
 | SyncManager | `ConcurrentDictionary.GetOrAdd()` (atomic, no TOCTOU) |
 | DB operations | `IDbContextFactory` → scoped DbContext per operation (EmailSyncService, ImapConnectionService, SmtpConnectionService) |
-| EF Core save | `SaveChangesSafeAsync()` — detach + retry on conflict |
+| Folder sync lock | Per-folder `SemaphoreSlim` in `EmailSyncService._folderSyncLocks` (prevents concurrent sync on same folder) |
+| EF Core save | `SaveChangesSafeAsync()` — detach + retry on concurrency conflict or UNIQUE constraint violation |
 | Batch save | Every 50 messages (avoid memory bloat) |
 | UI updates | `Dispatcher.Invoke()` for UI thread |
 | Folder switch | `CancellationToken` cancels previous load |

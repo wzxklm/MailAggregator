@@ -1,8 +1,10 @@
+using System.Collections.Concurrent;
 using MailAggregator.Core.Data;
 using MailAggregator.Core.Models;
 using MailKit;
 using MailKit.Net.Imap;
 using MailKit.Search;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using MimeKit;
 using Serilog;
@@ -18,6 +20,15 @@ public class EmailSyncService : IEmailSyncService
     private readonly IImapConnectionPool _connectionPool;
     private readonly IDbContextFactory<MailAggregatorDbContext> _dbContextFactory;
     private readonly ILogger _logger;
+
+    /// <summary>
+    /// Per-folder locks to prevent concurrent sync operations on the same folder,
+    /// which would cause UNIQUE constraint violations on (FolderId, Uid).
+    /// </summary>
+    private readonly ConcurrentDictionary<int, SemaphoreSlim> _folderSyncLocks = new();
+
+    private SemaphoreSlim GetFolderLock(int folderId)
+        => _folderSyncLocks.GetOrAdd(folderId, _ => new SemaphoreSlim(1, 1));
 
     public EmailSyncService(
         IImapConnectionPool connectionPool,
@@ -101,9 +112,27 @@ public class EmailSyncService : IEmailSyncService
         ArgumentNullException.ThrowIfNull(account);
         ArgumentNullException.ThrowIfNull(folder);
 
+        var folderLock = GetFolderLock(folder.Id);
+        await folderLock.WaitAsync(cancellationToken);
+        try
+        {
+            await SyncInitialCoreAsync(account, folder, cancellationToken);
+        }
+        finally
+        {
+            folderLock.Release();
+        }
+    }
+
+    private async Task SyncInitialCoreAsync(Account account, LocalMailFolder folder, CancellationToken cancellationToken)
+    {
         using var pooled = await _connectionPool.GetConnectionAsync(account, cancellationToken);
+        await SyncInitialCoreAsync(account, folder, pooled.Client, cancellationToken);
+    }
+
+    private async Task SyncInitialCoreAsync(Account account, LocalMailFolder folder, ImapClient client, CancellationToken cancellationToken)
+    {
         using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
-        var client = pooled.Client;
         var imapFolder = await client.GetFolderAsync(folder.FullName, cancellationToken);
         await imapFolder.OpenAsync(FolderAccess.ReadOnly, cancellationToken);
 
@@ -137,17 +166,37 @@ public class EmailSyncService : IEmailSyncService
     {
         ArgumentNullException.ThrowIfNull(account);
         ArgumentNullException.ThrowIfNull(folder);
-        using var pooled = await _connectionPool.GetConnectionAsync(account, cancellationToken);
-        using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
-        await SyncIncrementalCoreAsync(account, folder, pooled.Client, dbContext, cancellationToken);
+
+        var folderLock = GetFolderLock(folder.Id);
+        await folderLock.WaitAsync(cancellationToken);
+        try
+        {
+            using var pooled = await _connectionPool.GetConnectionAsync(account, cancellationToken);
+            using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
+            await SyncIncrementalCoreAsync(account, folder, pooled.Client, dbContext, cancellationToken);
+        }
+        finally
+        {
+            folderLock.Release();
+        }
     }
 
     public async Task SyncIncrementalAsync(Account account, LocalMailFolder folder, ImapClient client, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(account);
         ArgumentNullException.ThrowIfNull(folder);
-        using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
-        await SyncIncrementalCoreAsync(account, folder, client, dbContext, cancellationToken);
+
+        var folderLock = GetFolderLock(folder.Id);
+        await folderLock.WaitAsync(cancellationToken);
+        try
+        {
+            using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
+            await SyncIncrementalCoreAsync(account, folder, client, dbContext, cancellationToken);
+        }
+        finally
+        {
+            folderLock.Release();
+        }
     }
 
     private async Task SyncIncrementalCoreAsync(Account account, LocalMailFolder folder, ImapClient client, MailAggregatorDbContext dbContext, CancellationToken cancellationToken)
@@ -179,9 +228,10 @@ public class EmailSyncService : IEmailSyncService
             folder.UidValidity = imapFolder.UidValidity;
             folder.MaxUid = 0;
 
-            // Perform initial sync instead (creates its own DbContext and connection)
+            // Perform initial sync instead, reusing the caller's connection to avoid
+            // saturating the pool. Call core method directly since caller already holds the folder lock.
             await imapFolder.CloseAsync(false, cancellationToken);
-            await SyncInitialAsync(account, folder, cancellationToken);
+            await SyncInitialCoreAsync(account, folder, client, cancellationToken);
             return;
         }
 
@@ -207,7 +257,12 @@ public class EmailSyncService : IEmailSyncService
         folder.MessageCount = imapFolder.Count;
         folder.UnreadCount = imapFolder.Unread;
 
-        dbContext.Folders.Update(folder);
+        // Use Attach + mark-modified instead of Update to avoid graph traversal
+        // cascading to EmailMessage entities via the Messages navigation property.
+        dbContext.Folders.Attach(folder);
+        dbContext.Entry(folder).Property(f => f.MaxUid).IsModified = true;
+        dbContext.Entry(folder).Property(f => f.MessageCount).IsModified = true;
+        dbContext.Entry(folder).Property(f => f.UnreadCount).IsModified = true;
         await SaveChangesSafeAsync(dbContext, cancellationToken);
 
         await imapFolder.CloseAsync(false, cancellationToken);
@@ -531,6 +586,11 @@ public class EmailSyncService : IEmailSyncService
         var updatedCount = 0;
         var deletedUids = new List<uint>();
 
+        // Build lookup once to avoid O(n*m) ChangeTracker scan inside the loop.
+        // Entities may already be tracked from FetchAndCacheMessagesAsync in the same DbContext.
+        var trackedEntries = dbContext.ChangeTracker.Entries<EmailMessage>()
+            .ToDictionary(e => e.Entity.Id);
+
         foreach (var local in localMessages)
         {
             if (!serverFlags.TryGetValue(local.Uid, out var server))
@@ -543,12 +603,28 @@ public class EmailSyncService : IEmailSyncService
             if (local.IsRead == server.IsRead && local.IsFlagged == server.IsFlagged)
                 continue;
 
-            var entity = new EmailMessage { Id = local.Id, IsRead = server.IsRead, IsFlagged = server.IsFlagged };
-            dbContext.Messages.Attach(entity);
-            if (local.IsRead != server.IsRead)
-                dbContext.Entry(entity).Property(m => m.IsRead).IsModified = true;
-            if (local.IsFlagged != server.IsFlagged)
-                dbContext.Entry(entity).Property(m => m.IsFlagged).IsModified = true;
+            if (trackedEntries.TryGetValue(local.Id, out var tracked))
+            {
+                if (local.IsRead != server.IsRead)
+                {
+                    tracked.Entity.IsRead = server.IsRead;
+                    tracked.Property(m => m.IsRead).IsModified = true;
+                }
+                if (local.IsFlagged != server.IsFlagged)
+                {
+                    tracked.Entity.IsFlagged = server.IsFlagged;
+                    tracked.Property(m => m.IsFlagged).IsModified = true;
+                }
+            }
+            else
+            {
+                var entity = new EmailMessage { Id = local.Id, IsRead = server.IsRead, IsFlagged = server.IsFlagged };
+                dbContext.Messages.Attach(entity);
+                if (local.IsRead != server.IsRead)
+                    dbContext.Entry(entity).Property(m => m.IsRead).IsModified = true;
+                if (local.IsFlagged != server.IsFlagged)
+                    dbContext.Entry(entity).Property(m => m.IsFlagged).IsModified = true;
+            }
 
             updatedCount++;
         }
@@ -589,8 +665,8 @@ public class EmailSyncService : IEmailSyncService
     }
 
     /// <summary>
-    /// Saves changes, gracefully handling concurrency conflicts from parallel sync operations.
-    /// Conflicting (stale) entities are detached and remaining changes are retried.
+    /// Saves changes, gracefully handling concurrency conflicts and UNIQUE constraint
+    /// violations from parallel sync operations.
     /// </summary>
     private async Task SaveChangesSafeAsync(MailAggregatorDbContext dbContext, CancellationToken cancellationToken)
     {
@@ -603,6 +679,22 @@ public class EmailSyncService : IEmailSyncService
             _logger.Warning("Concurrency conflict on {Count} entity(ies), detaching stale entries and retrying",
                 ex.Entries.Count);
             foreach (var entry in ex.Entries)
+            {
+                entry.State = EntityState.Detached;
+            }
+            if (dbContext.ChangeTracker.HasChanges())
+            {
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is SqliteException { SqliteErrorCode: 19 })
+        {
+            // UNIQUE constraint violation (e.g. duplicate FolderId+Uid from concurrent sync).
+            // Detach the duplicate Added entries — the other sync already inserted them.
+            _logger.Warning("UNIQUE constraint conflict during save, detaching duplicate entries and retrying");
+            foreach (var entry in dbContext.ChangeTracker.Entries()
+                .Where(e => e.State == EntityState.Added)
+                .ToList())
             {
                 entry.State = EntityState.Detached;
             }

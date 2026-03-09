@@ -7,7 +7,11 @@
 ## EF Core / 数据库
 
 - **DbContext 非线程安全**：禁止 `Task.Run(() => query.ToList())`，必须用 `ToListAsync()`。DbContext 不能跨线程共享，后台服务（如 `EmailSyncService`）必须用 `IDbContextFactory` 创建 scoped 实例，UI 层 scoped 服务可直接注入
-- **并发冲突**：从一个 DbContext 查出的实体不能 Attach 到另一个，会抛 tracking 异常。`SaveChangesSafeAsync()` 处理此场景：分离旧实体并重试
+- **并发冲突**：从一个 DbContext 查出的实体不能 Attach 到另一个，会抛 tracking 异常。`SaveChangesSafeAsync()` 处理此场景：分离旧实体并重试。也处理 SQLite UNIQUE 约束冲突（error code 19）：分离 Added 实体并重试
+- **同一文件夹禁止并发同步**：`EmailSyncService` 使用 per-folder `SemaphoreSlim`（`_folderSyncLocks`）防止 SyncManager IDLE 循环与 UI 层同时对同一文件夹执行同步，否则会导致 UNIQUE 约束冲突。锁在公开方法（`SyncInitialAsync`/`SyncIncrementalAsync`）获取，内部 `*CoreAsync` 方法不加锁
+- **UIDVALIDITY 分支须调用 CoreAsync 避免死锁**：`SyncIncrementalCoreAsync` 检测到 UIDVALIDITY 变化时，必须调用 `SyncInitialCoreAsync`（不加锁版本），不能调用公开的 `SyncInitialAsync`（会重入同一 `SemaphoreSlim` 导致死锁）。同时传入调用方的 `ImapClient` 复用连接，避免同一账户占满连接池（max 2）
+- **同一 DbContext 内 Attach 前必须检查 ChangeTracker**：`FetchAndCacheMessagesAsync` 保存后实体仍被跟踪（`Unchanged` 状态），后续 `SyncFlagsAndDetectDeletionsAsync` 若对同 Id 实体调用 `Attach` 会抛 `InvalidOperationException`。修复模式：先查 `ChangeTracker.Entries<T>()` 构建字典，已跟踪则直接更新 tracked entity，否则 Attach 新桩对象。参见 `SetMessageReadAsync`、`FetchMessageBodyAsync`、`SyncFlagsAndDetectDeletionsAsync`
+- **避免 `Update()` 级联图遍历**：`dbContext.Folders.Update(folder)` 会级联到 `Messages` 导航属性，若其中有已跟踪实体则冲突。改用 `Attach` + 逐个 `Property(...).IsModified = true` 仅标记需要更新的标量属性
 - **批量保存**：大量消息同步时每 50 条保存一次，避免 pending changes 过多导致内存飙升
 
 ## MailKit / 邮件协议
@@ -17,6 +21,7 @@
 - **IMAP IDLE 必须独立连接**：IDLE 占用连接，不能复用同步连接。连接池 per-account 最多 2 个连接
 - **IDLE 超时**：RFC 2177 要求 < 30 分钟，项目设 29 分钟。超时后必须重新打开文件夹再进入 IDLE
 - **连接复用前必须验证**：从池中取出的连接必须检查 `IsConnected && IsAuthenticated`，失效则释放
+- **MimeKit TryParse 不验证地址格式**：`InternetAddressList.TryParse` 对纯数字等无效输入（如 `1`）仍返回成功并构造无域名的 `MailboxAddress`。发送前必须调用 `ParseAndValidateAddresses` 检查每个地址包含 `@` 且 local/domain 非空，否则无效地址直达 SMTP 服务器返回不友好的 5xx 错误
 
 ## OAuth
 
@@ -62,6 +67,7 @@
 - **WebView2 安全配置**：禁用脚本、禁用右键菜单、阻止外部导航和资源加载（防追踪）
 - **OAuth state 参数**：必须用 `RandomNumberGenerator` 生成随机 state 并在回调中验证，防 CSRF（RFC 6749 §10.12）
 - **不使用外部进程做 DNS 查询**：已从 nslookup 进程迁移到 DnsClient.NET 库，消除了命令注入风险和 `ValidDomainRegex` 依赖
+- **HttpListener 取消须捕获两种异常**：`listener.Stop()`（通过 `cancellationToken.Register` 触发）可能使 `GetContextAsync()` 抛出 `ObjectDisposedException` 或 `HttpListenerException`（Windows 错误码 995），取决于时序。catch 块必须同时处理两者并转换为 `OperationCanceledException`，否则 `HttpListenerException` 会作为未处理异常向上传播
 - **HttpListener 资源清理**：`_pendingListeners` 中的 HttpListener 必须在新 OAuth 流开始时清理，防止abandoned flow 导致端口泄漏
 - **端口绑定 TOCTOU**：发现空闲端口后必须立即绑定（`StartListenerOnFreePort` 带重试），不能先查后绑
 

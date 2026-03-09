@@ -12,7 +12,7 @@ MailAggregator — Windows desktop email aggregation client, direct IMAP/SMTP, n
 | Architecture | MVVM (CommunityToolkit.Mvvm) + DI                       |
 | Platform     | Windows x64 (Core cross-platform, Desktop Windows-only) |
 | Version      | v1.0.8                                                  |
-| Tests        | 180 xUnit tests                                         |
+| Tests        | 191 xUnit tests                                         |
 
 Supported providers: Gmail, Microsoft, Yahoo, AOL, Fastmail, any standard IMAP/SMTP server.
 
@@ -107,13 +107,13 @@ Supported providers: Gmail, Microsoft, Yahoo, AOL, Fastmail, any standard IMAP/S
     │       ├── NullToVisibilityConverter.cs         # Null → Collapsed
     │       └── FileSizeConverter.cs                 # Bytes → "1.5 MB"
     │
-    └── MailAggregator.Tests/                       # ═══ Tests (net8.0, 180 tests) ═══
+    └── MailAggregator.Tests/                       # ═══ Tests (net8.0, 191 tests) ═══
         ├── MailAggregator.Tests.csproj
         ├── Data/MailAggregatorDbContextTests.cs                        # [6]
         └── Services/
             ├── Auth/{Credential,Password,OAuth}ServiceTests.cs         # [8+15+33]
             ├── Discovery/AutoDiscoveryServiceTests.cs                   # [35]
-            ├── Mail/{EmailSync,ImapConnection,EmailSend}ServiceTests.cs # [9+4+18]
+            ├── Mail/{EmailSync,ImapConnection,EmailSend}ServiceTests.cs # [9+4+29]
             ├── AccountManagement/AccountServiceTests.cs                 # [20]
             └── Sync/SyncManagerTests.cs                                 # [30]
 ```

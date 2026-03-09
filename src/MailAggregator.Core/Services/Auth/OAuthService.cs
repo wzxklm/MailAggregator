@@ -174,7 +174,8 @@ public class OAuthService : IOAuthService
             _logger.Information("Received OAuth authorization code");
             return code;
         }
-        catch (ObjectDisposedException) when (cancellationToken.IsCancellationRequested)
+        catch (Exception ex) when ((ex is ObjectDisposedException or HttpListenerException)
+            && cancellationToken.IsCancellationRequested)
         {
             throw new OperationCanceledException(cancellationToken);
         }
