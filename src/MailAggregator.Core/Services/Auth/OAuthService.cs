@@ -51,7 +51,7 @@ public class OAuthService : IOAuthService
     }
 
     /// <inheritdoc />
-    public (string authorizationUrl, string codeVerifier, int listenerPort) PrepareAuthorization(OAuthProviderConfig provider)
+    public (string authorizationUrl, string codeVerifier, int listenerPort) PrepareAuthorization(OAuthProviderConfig provider, string? loginHint = null)
     {
         ArgumentNullException.ThrowIfNull(provider);
 
@@ -69,6 +69,14 @@ public class OAuthService : IOAuthService
             ["code_challenge_method"] = "S256",
             ["scope"] = string.Join(" ", provider.Scopes)
         };
+
+        // Add login_hint so the OAuth provider pre-fills the user's email
+        if (!string.IsNullOrEmpty(loginHint))
+            queryParams["login_hint"] = loginHint;
+
+        // Add provider-specific params (e.g. access_type=offline for Google)
+        foreach (var kvp in provider.AdditionalAuthParams)
+            queryParams[kvp.Key] = kvp.Value;
 
         var queryString = string.Join("&", queryParams.Select(kvp =>
             $"{Uri.EscapeDataString(kvp.Key)}={Uri.EscapeDataString(kvp.Value)}"));

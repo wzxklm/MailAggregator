@@ -35,7 +35,8 @@ internal static class MailConnectionHelper
         Account account,
         ICredentialEncryptionService encryption,
         CancellationToken cancellationToken,
-        IOAuthService? oAuthService = null)
+        IOAuthService? oAuthService = null,
+        Func<Account, CancellationToken, Task>? onTokenRefreshed = null)
     {
         if (account.AuthType == AuthType.OAuth2)
         {
@@ -56,6 +57,10 @@ internal static class MailConnectionHelper
                     if (refreshed.RefreshToken != null)
                         account.EncryptedRefreshToken = refreshed.RefreshToken;
                     account.OAuthTokenExpiry = refreshed.ExpiresAt;
+
+                    // Persist the refreshed tokens to the database
+                    if (onTokenRefreshed != null)
+                        await onTokenRefreshed(account, cancellationToken);
                 }
             }
 

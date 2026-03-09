@@ -46,7 +46,7 @@ Running inside a DevContainer (Ubuntu 22.04, CUDA 12.4). See `.devcontainer/Dock
 - Current phase: Phase 6 (CI/CD) — Complete
 - Completed: Phase 0 — .NET 8 SDK, solution skeleton, NuGet dependencies, directory structure; Phase 1 — Data models, EF Core SQLite DbContext, AES-256-GCM credential encryption; Phase 2 — AutoDiscovery service (5-level fallback), OAuth PKCE service, Password auth service; Phase 3 — IMAP/SMTP connection management (MailConnectionHelper shared logic), EmailSyncService (folder sync, initial/incremental sync, flags, attachments, move, delete), EmailSendService (compose, reply, reply-all, forward); Phase 4 — AccountService (add/edit/delete/list accounts, AutoDiscovery+auth integration, connection validation), SyncManager (per-account IMAP IDLE background sync, exponential backoff reconnection, NewEmailsReceived event); Phase 5 — WPF UI layer (DI container, three-pane MainWindow, account wizard, inbox/unified inbox, compose/reply/forward, WebView2 email preview, toast notifications); Phase 6 — GitHub Actions CI/CD (tag-triggered build, test, publish win-x64 self-contained, GitHub Release upload)
 - In progress: All phases complete
-- Latest release: v1.0.4
+- Latest release: v1.0.7
 
 # 5. Environment Status
 

@@ -14,7 +14,7 @@ public interface IOAuthService
     /// Generates the authorization URL for the OAuth PKCE flow.
     /// Returns the URL and the code_verifier (needed later for token exchange).
     /// </summary>
-    (string authorizationUrl, string codeVerifier, int listenerPort) PrepareAuthorization(OAuthProviderConfig provider);
+    (string authorizationUrl, string codeVerifier, int listenerPort) PrepareAuthorization(OAuthProviderConfig provider, string? loginHint = null);
 
     /// <summary>
     /// Starts a local HTTP listener on the specified port and waits for the OAuth callback.

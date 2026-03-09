@@ -1,45 +1,51 @@
 [
   {
     "name": "Gmail",
-    "serverHosts": ["imap.gmail.com", "smtp.gmail.com"],
-    "clientId": "",
-    "clientSecret": "",
+    "serverHosts": ["imap.gmail.com", "smtp.gmail.com", "imap.googlemail.com", "smtp.googlemail.com", "pop.googlemail.com"],
+    "clientId": "406964657835-aq8lmia8j95dhl1a2bvharmfk3t1hgqj.apps.googleusercontent.com",
+    "clientSecret": "kSmqreRr0qwBWJgbf5Y-PjSU",
     "authorizationEndpoint": "https://accounts.google.com/o/oauth2/v2/auth",
     "tokenEndpoint": "https://oauth2.googleapis.com/token",
-    "scopes": ["https://mail.google.com/"]
+    "scopes": ["https://mail.google.com/"],
+    "additionalAuthParams": {
+      "access_type": "offline",
+      "prompt": "consent"
+    }
   },
   {
     "name": "Microsoft",
-    "serverHosts": ["outlook.office365.com", "smtp.office365.com", "smtp-mail.outlook.com"],
-    "clientId": "",
+    "serverHosts": ["outlook.office365.com", "smtp.office365.com", "smtp-mail.outlook.com", "imap-mail.outlook.com", "imap.outlook.com", "smtp.outlook.com", "pop-mail.outlook.com", "pop.outlook.com"],
+    "clientId": "9e5f94bc-e8a4-4e73-b8be-63364c29d753",
     "authorizationEndpoint": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
     "tokenEndpoint": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
     "scopes": ["https://outlook.office365.com/IMAP.AccessAsUser.All", "https://outlook.office365.com/SMTP.Send", "offline_access"]
   },
   {
     "name": "Yahoo",
-    "serverHosts": ["imap.mail.yahoo.com", "smtp.mail.yahoo.com"],
-    "clientId": "",
-    "clientSecret": "",
+    "serverHosts": ["imap.mail.yahoo.com", "smtp.mail.yahoo.com", "pop.mail.yahoo.com", "imap.mail.yahoo.co.jp", "smtp.mail.yahoo.co.jp"],
+    "clientId": "dj0yJmk9NUtCTWFMNVpTaVJmJmQ9WVdrOWVUQjJXVWxJTjJrbSZzPWNvbnN1bWVyc2VjcmV0Jng9Yjg--",
+    "clientSecret": "f2de6a30ae123cdbc258c15e0812799010d589cc",
     "authorizationEndpoint": "https://api.login.yahoo.com/oauth2/request_auth",
     "tokenEndpoint": "https://api.login.yahoo.com/oauth2/get_token",
+    "redirectionEndpoint": "http://localhost",
     "scopes": ["mail-w"]
   },
   {
     "name": "AOL",
-    "serverHosts": ["imap.aol.com", "smtp.aol.com"],
-    "clientId": "",
-    "clientSecret": "",
+    "serverHosts": ["imap.aol.com", "smtp.aol.com", "pop.aol.com"],
+    "clientId": "dj0yJmk9NUtCTWFMNVpTaVJmJmQ9WVdrOWVUQjJXVWxJTjJrbSZzPWNvbnN1bWVyc2VjcmV0Jng9Yjg--",
+    "clientSecret": "f2de6a30ae123cdbc258c15e0812799010d589cc",
     "authorizationEndpoint": "https://api.login.aol.com/oauth2/request_auth",
     "tokenEndpoint": "https://api.login.aol.com/oauth2/get_token",
+    "redirectionEndpoint": "http://localhost",
     "scopes": ["mail-w"]
   },
   {
     "name": "Fastmail",
-    "serverHosts": ["imap.fastmail.com", "smtp.fastmail.com"],
-    "clientId": "",
+    "serverHosts": ["imap.fastmail.com", "smtp.fastmail.com", "pop.fastmail.com"],
+    "clientId": "35f0d5bc",
     "authorizationEndpoint": "https://api.fastmail.com/oauth/authorize",
     "tokenEndpoint": "https://api.fastmail.com/oauth/refresh",
-    "scopes": ["urn:ietf:params:jmap:mail"]
+    "scopes": ["https://www.fastmail.com/dev/protocol-imap", "https://www.fastmail.com/dev/protocol-smtp"]
   }
 ]

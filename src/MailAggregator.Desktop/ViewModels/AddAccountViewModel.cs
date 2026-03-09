@@ -273,8 +273,8 @@ public partial class AddAccountViewModel : ObservableObject
             return null;
         }
 
-        // Step 1: Prepare authorization URL
-        var (authUrl, codeVerifier, listenerPort) = _oAuthService.PrepareAuthorization(provider);
+        // Step 1: Prepare authorization URL (pass email as login_hint)
+        var (authUrl, codeVerifier, listenerPort) = _oAuthService.PrepareAuthorization(provider, EmailAddress);
 
         // Step 2: Open browser for user authorization
         OAuthStatus = "Opening browser for authorization...";

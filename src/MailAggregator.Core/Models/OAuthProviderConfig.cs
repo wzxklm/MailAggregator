@@ -18,4 +18,15 @@ public class OAuthProviderConfig
     public string AuthorizationEndpoint { get; set; } = string.Empty;
     public string TokenEndpoint { get; set; } = string.Empty;
     public List<string> Scopes { get; set; } = new();
+
+    /// <summary>
+    /// Optional custom redirection endpoint required by some providers (e.g. Yahoo/AOL use https://127.0.0.1).
+    /// When set, this is used as the redirect_uri base in authorization requests.
+    /// </summary>
+    public string? RedirectionEndpoint { get; set; }
+
+    /// <summary>
+    /// Additional query parameters to include in the authorization URL (e.g. access_type=offline for Google).
+    /// </summary>
+    public Dictionary<string, string> AdditionalAuthParams { get; set; } = new();
 }

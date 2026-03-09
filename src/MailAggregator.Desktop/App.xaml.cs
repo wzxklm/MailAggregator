@@ -66,6 +66,8 @@ public partial class App : System.Windows.Application
         // Database
         services.AddDbContext<MailAggregatorDbContext>(options =>
             options.UseSqlite($"Data Source={dbPath}"));
+        services.AddDbContextFactory<MailAggregatorDbContext>(options =>
+            options.UseSqlite($"Data Source={dbPath}"), ServiceLifetime.Singleton);
 
         // Logging
         services.AddSingleton<ILogger>(Log.Logger);
