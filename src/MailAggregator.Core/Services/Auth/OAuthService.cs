@@ -51,24 +51,41 @@ public class OAuthService : IOAuthService
     }
 
     /// <inheritdoc />
-    public (string authorizationUrl, string codeVerifier, int listenerPort) PrepareAuthorization(OAuthProviderConfig provider, string? loginHint = null)
+    public (string authorizationUrl, string codeVerifier, int listenerPort, string redirectUri) PrepareAuthorization(OAuthProviderConfig provider, string? loginHint = null)
     {
         ArgumentNullException.ThrowIfNull(provider);
 
-        var codeVerifier = GenerateCodeVerifier();
-        var codeChallenge = ComputeCodeChallenge(codeVerifier);
         var listenerPort = FindFreePort();
-        var redirectUri = $"http://localhost:{listenerPort}/";
+
+        // Use provider's RedirectionEndpoint if configured, otherwise default to http://localhost
+        string redirectUri;
+        if (!string.IsNullOrEmpty(provider.RedirectionEndpoint))
+        {
+            var baseUri = new Uri(provider.RedirectionEndpoint);
+            redirectUri = $"{baseUri.Scheme}://{baseUri.Host}:{listenerPort}/";
+        }
+        else
+        {
+            redirectUri = $"http://localhost:{listenerPort}/";
+        }
 
         var queryParams = new Dictionary<string, string>
         {
             ["client_id"] = provider.ClientId,
             ["response_type"] = "code",
             ["redirect_uri"] = redirectUri,
-            ["code_challenge"] = codeChallenge,
-            ["code_challenge_method"] = "S256",
             ["scope"] = string.Join(" ", provider.Scopes)
         };
+
+        // Only include PKCE parameters when the provider requires it
+        var codeVerifier = string.Empty;
+        if (provider.UsePKCE)
+        {
+            codeVerifier = GenerateCodeVerifier();
+            var codeChallenge = ComputeCodeChallenge(codeVerifier);
+            queryParams["code_challenge"] = codeChallenge;
+            queryParams["code_challenge_method"] = "S256";
+        }
 
         // Add login_hint so the OAuth provider pre-fills the user's email
         if (!string.IsNullOrEmpty(loginHint))
@@ -83,9 +100,9 @@ public class OAuthService : IOAuthService
 
         var authorizationUrl = $"{provider.AuthorizationEndpoint}?{queryString}";
 
-        _logger.Information("Prepared OAuth authorization for {Provider} on port {Port}", provider.Name, listenerPort);
+        _logger.Information("Prepared OAuth authorization for {Provider} on port {Port}, PKCE={UsePKCE}", provider.Name, listenerPort, provider.UsePKCE);
 
-        return (authorizationUrl, codeVerifier, listenerPort);
+        return (authorizationUrl, codeVerifier, listenerPort, redirectUri);
     }
 
     /// <inheritdoc />
@@ -146,9 +163,12 @@ public class OAuthService : IOAuthService
             ["grant_type"] = "authorization_code",
             ["code"] = authorizationCode,
             ["redirect_uri"] = redirectUri,
-            ["client_id"] = provider.ClientId,
-            ["code_verifier"] = codeVerifier
+            ["client_id"] = provider.ClientId
         };
+
+        // Only include code_verifier when PKCE was used
+        if (!string.IsNullOrEmpty(codeVerifier))
+            requestBody["code_verifier"] = codeVerifier;
 
         if (!string.IsNullOrEmpty(provider.ClientSecret))
             requestBody["client_secret"] = provider.ClientSecret;

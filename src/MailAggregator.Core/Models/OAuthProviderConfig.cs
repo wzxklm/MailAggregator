@@ -20,8 +20,16 @@ public class OAuthProviderConfig
     public List<string> Scopes { get; set; } = new();
 
     /// <summary>
-    /// Optional custom redirection endpoint required by some providers (e.g. Yahoo/AOL use https://127.0.0.1).
-    /// When set, this is used as the redirect_uri base in authorization requests.
+    /// Whether this provider requires PKCE (Proof Key for Code Exchange).
+    /// When false, code_challenge/code_challenge_method are omitted from authorization requests
+    /// and code_verifier is omitted from token exchange requests.
+    /// Defaults to true. Google/Yahoo/AOL do not use PKCE; Microsoft/Fastmail do.
+    /// </summary>
+    public bool UsePKCE { get; set; } = true;
+
+    /// <summary>
+    /// Optional custom redirection endpoint required by some providers (e.g. Yahoo/AOL use http://localhost).
+    /// When set, this scheme and host are used as the redirect_uri base in authorization requests.
     /// </summary>
     public string? RedirectionEndpoint { get; set; }
 

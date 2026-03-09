@@ -12,6 +12,12 @@ internal static class MailConnectionHelper
     internal const int MaxRetries = 3;
     internal static readonly TimeSpan InitialRetryDelay = TimeSpan.FromSeconds(1);
 
+    /// <summary>
+    /// Grace period for token refresh: refresh tokens 60 seconds before actual expiry
+    /// to avoid authentication failures due to clock skew or network latency.
+    /// </summary>
+    internal static readonly TimeSpan TokenRefreshGracePeriod = TimeSpan.FromSeconds(60);
+
     internal static SecureSocketOptions GetSecureSocketOptions(ConnectionEncryptionType encryption) => encryption switch
     {
         ConnectionEncryptionType.Ssl => SecureSocketOptions.SslOnConnect,
@@ -43,10 +49,10 @@ internal static class MailConnectionHelper
             if (string.IsNullOrEmpty(account.EncryptedAccessToken))
                 throw new InvalidOperationException("OAuth2 account is missing access token.");
 
-            // Refresh token if expired
+            // Refresh token if expired or about to expire (with grace period)
             if (oAuthService != null
                 && account.OAuthTokenExpiry.HasValue
-                && account.OAuthTokenExpiry.Value <= DateTimeOffset.UtcNow
+                && account.OAuthTokenExpiry.Value <= DateTimeOffset.UtcNow.Add(TokenRefreshGracePeriod)
                 && !string.IsNullOrEmpty(account.EncryptedRefreshToken))
             {
                 var provider = oAuthService.FindProviderByHost(account.ImapHost);

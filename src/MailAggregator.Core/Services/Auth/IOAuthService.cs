@@ -11,10 +11,10 @@ public interface IOAuthService
     OAuthProviderConfig? FindProviderByHost(string serverHost);
 
     /// <summary>
-    /// Generates the authorization URL for the OAuth PKCE flow.
-    /// Returns the URL and the code_verifier (needed later for token exchange).
+    /// Generates the authorization URL for the OAuth flow.
+    /// Returns the URL, code_verifier (empty if PKCE not used), listener port, and redirect URI.
     /// </summary>
-    (string authorizationUrl, string codeVerifier, int listenerPort) PrepareAuthorization(OAuthProviderConfig provider, string? loginHint = null);
+    (string authorizationUrl, string codeVerifier, int listenerPort, string redirectUri) PrepareAuthorization(OAuthProviderConfig provider, string? loginHint = null);
 
     /// <summary>
     /// Starts a local HTTP listener on the specified port and waits for the OAuth callback.

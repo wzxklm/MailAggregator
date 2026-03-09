@@ -26,7 +26,8 @@ public class OAuthServiceTests : IDisposable
             ClientId = "test-gmail-client-id",
             AuthorizationEndpoint = "https://accounts.google.com/o/oauth2/v2/auth",
             TokenEndpoint = "https://oauth2.googleapis.com/token",
-            Scopes = new List<string> { "https://mail.google.com/" }
+            Scopes = new List<string> { "https://mail.google.com/" },
+            UsePKCE = false
         },
         new OAuthProviderConfig
         {
@@ -35,7 +36,20 @@ public class OAuthServiceTests : IDisposable
             ClientId = "test-ms-client-id",
             AuthorizationEndpoint = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
             TokenEndpoint = "https://login.microsoftonline.com/common/oauth2/v2.0/token",
-            Scopes = new List<string> { "https://outlook.office365.com/IMAP.AccessAsUser.All", "offline_access" }
+            Scopes = new List<string> { "https://outlook.office365.com/IMAP.AccessAsUser.All", "offline_access" },
+            UsePKCE = true
+        },
+        new OAuthProviderConfig
+        {
+            Name = "Yahoo",
+            ServerHosts = new List<string> { "imap.mail.yahoo.com", "smtp.mail.yahoo.com" },
+            ClientId = "test-yahoo-client-id",
+            ClientSecret = "test-yahoo-secret",
+            AuthorizationEndpoint = "https://api.login.yahoo.com/oauth2/request_auth",
+            TokenEndpoint = "https://api.login.yahoo.com/oauth2/get_token",
+            RedirectionEndpoint = "http://localhost",
+            Scopes = new List<string> { "mail-w" },
+            UsePKCE = false
         }
     };
 
@@ -120,12 +134,12 @@ public class OAuthServiceTests : IDisposable
     #region PrepareAuthorization
 
     [Fact]
-    public void PrepareAuthorization_GeneratesValidCodeVerifier()
+    public void PrepareAuthorization_WithPKCE_GeneratesValidCodeVerifier()
     {
         var service = CreateService();
-        var provider = TestProviders[0];
+        var provider = TestProviders[1]; // Microsoft uses PKCE
 
-        var (_, codeVerifier, _) = service.PrepareAuthorization(provider);
+        var (_, codeVerifier, _, _) = service.PrepareAuthorization(provider);
 
         // RFC 7636: code_verifier must be 43-128 characters from [A-Za-z0-9-._~]
         codeVerifier.Length.Should().BeInRange(43, 128);
@@ -133,24 +147,35 @@ public class OAuthServiceTests : IDisposable
     }
 
     [Fact]
-    public void PrepareAuthorization_GeneratesUniqueCodeVerifiers()
+    public void PrepareAuthorization_WithoutPKCE_ReturnsEmptyCodeVerifier()
     {
         var service = CreateService();
-        var provider = TestProviders[0];
+        var provider = TestProviders[0]; // Gmail does not use PKCE
 
-        var (_, verifier1, _) = service.PrepareAuthorization(provider);
-        var (_, verifier2, _) = service.PrepareAuthorization(provider);
+        var (_, codeVerifier, _, _) = service.PrepareAuthorization(provider);
+
+        codeVerifier.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void PrepareAuthorization_WithPKCE_GeneratesUniqueCodeVerifiers()
+    {
+        var service = CreateService();
+        var provider = TestProviders[1]; // Microsoft uses PKCE
+
+        var (_, verifier1, _, _) = service.PrepareAuthorization(provider);
+        var (_, verifier2, _, _) = service.PrepareAuthorization(provider);
 
         verifier1.Should().NotBe(verifier2, "each invocation should produce a unique code verifier");
     }
 
     [Fact]
-    public void PrepareAuthorization_GeneratesValidAuthorizationUrl()
+    public void PrepareAuthorization_WithoutPKCE_OmitsCodeChallengeFromUrl()
     {
         var service = CreateService();
-        var provider = TestProviders[0];
+        var provider = TestProviders[0]; // Gmail does not use PKCE
 
-        var (authUrl, _, listenerPort) = service.PrepareAuthorization(provider);
+        var (authUrl, _, listenerPort, _) = service.PrepareAuthorization(provider);
 
         var uri = new Uri(authUrl);
         uri.Scheme.Should().Be("https");
@@ -160,9 +185,23 @@ public class OAuthServiceTests : IDisposable
         query["client_id"].Should().Be("test-gmail-client-id");
         query["response_type"].Should().Be("code");
         query["redirect_uri"].Should().Be($"http://localhost:{listenerPort}/");
+        query["code_challenge"].Should().BeNull();
+        query["code_challenge_method"].Should().BeNull();
+        query["scope"].Should().Be("https://mail.google.com/");
+    }
+
+    [Fact]
+    public void PrepareAuthorization_WithPKCE_IncludesCodeChallengeInUrl()
+    {
+        var service = CreateService();
+        var provider = TestProviders[1]; // Microsoft uses PKCE
+
+        var (authUrl, _, _, _) = service.PrepareAuthorization(provider);
+
+        var uri = new Uri(authUrl);
+        var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
         query["code_challenge"].Should().NotBeNullOrEmpty();
         query["code_challenge_method"].Should().Be("S256");
-        query["scope"].Should().Be("https://mail.google.com/");
     }
 
     [Fact]
@@ -171,9 +210,35 @@ public class OAuthServiceTests : IDisposable
         var service = CreateService();
         var provider = TestProviders[0];
 
-        var (_, _, listenerPort) = service.PrepareAuthorization(provider);
+        var (_, _, listenerPort, _) = service.PrepareAuthorization(provider);
 
         listenerPort.Should().BeInRange(1, 65535);
+    }
+
+    [Fact]
+    public void PrepareAuthorization_ReturnsRedirectUri()
+    {
+        var service = CreateService();
+        var provider = TestProviders[0];
+
+        var (_, _, listenerPort, redirectUri) = service.PrepareAuthorization(provider);
+
+        redirectUri.Should().Be($"http://localhost:{listenerPort}/");
+    }
+
+    [Fact]
+    public void PrepareAuthorization_WithRedirectionEndpoint_UsesProviderSchemeAndHost()
+    {
+        var service = CreateService();
+        var provider = TestProviders[2]; // Yahoo has RedirectionEndpoint = "http://localhost"
+
+        var (authUrl, _, listenerPort, redirectUri) = service.PrepareAuthorization(provider);
+
+        redirectUri.Should().Be($"http://localhost:{listenerPort}/");
+
+        var uri = new Uri(authUrl);
+        var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+        query["redirect_uri"].Should().Be(redirectUri);
     }
 
     [Fact]
@@ -182,7 +247,7 @@ public class OAuthServiceTests : IDisposable
         var service = CreateService();
         var provider = TestProviders[1]; // Microsoft has multiple scopes
 
-        var (authUrl, _, _) = service.PrepareAuthorization(provider);
+        var (authUrl, _, _, _) = service.PrepareAuthorization(provider);
 
         var uri = new Uri(authUrl);
         var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
@@ -222,7 +287,7 @@ public class OAuthServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task ExchangeCodeForTokenAsync_SendsCorrectParameters()
+    public async Task ExchangeCodeForTokenAsync_WithPKCE_SendsCodeVerifier()
     {
         string? capturedContent = null;
         string? capturedUri = null;
@@ -248,17 +313,83 @@ public class OAuthServiceTests : IDisposable
 
         var httpClient = new HttpClient(mockHandler.Object);
         var service = CreateService(httpClient);
-        var provider = TestProviders[0];
+        var provider = TestProviders[1]; // Microsoft uses PKCE
 
         await service.ExchangeCodeForTokenAsync(
             provider, "my-auth-code", "my-verifier", "http://localhost:9999/");
 
-        capturedUri.Should().Be("https://oauth2.googleapis.com/token");
+        capturedUri.Should().Be("https://login.microsoftonline.com/common/oauth2/v2.0/token");
         capturedContent.Should().Contain("grant_type=authorization_code");
         capturedContent.Should().Contain("code=my-auth-code");
         capturedContent.Should().Contain("code_verifier=my-verifier");
-        capturedContent.Should().Contain($"client_id={Uri.EscapeDataString("test-gmail-client-id")}");
+        capturedContent.Should().Contain($"client_id={Uri.EscapeDataString("test-ms-client-id")}");
         capturedContent.Should().Contain($"redirect_uri={Uri.EscapeDataString("http://localhost:9999/")}");
+    }
+
+    [Fact]
+    public async Task ExchangeCodeForTokenAsync_WithoutPKCE_OmitsCodeVerifier()
+    {
+        string? capturedContent = null;
+
+        var mockHandler = new Mock<HttpMessageHandler>();
+        mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>(async (req, _) =>
+            {
+                capturedContent = await req.Content!.ReadAsStringAsync();
+            })
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    JsonSerializer.Serialize(new { access_token = "at", expires_in = 3600 }),
+                    Encoding.UTF8,
+                    "application/json")
+            });
+
+        var httpClient = new HttpClient(mockHandler.Object);
+        var service = CreateService(httpClient);
+        var provider = TestProviders[0]; // Gmail does not use PKCE
+
+        await service.ExchangeCodeForTokenAsync(
+            provider, "my-auth-code", "", "http://localhost:9999/");
+
+        capturedContent.Should().NotContain("code_verifier");
+    }
+
+    [Fact]
+    public async Task ExchangeCodeForTokenAsync_WithClientSecret_SendsClientSecret()
+    {
+        string? capturedContent = null;
+
+        var mockHandler = new Mock<HttpMessageHandler>();
+        mockHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>(async (req, _) =>
+            {
+                capturedContent = await req.Content!.ReadAsStringAsync();
+            })
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    JsonSerializer.Serialize(new { access_token = "at", expires_in = 3600 }),
+                    Encoding.UTF8,
+                    "application/json")
+            });
+
+        var httpClient = new HttpClient(mockHandler.Object);
+        var service = CreateService(httpClient);
+        var provider = TestProviders[2]; // Yahoo has clientSecret
+
+        await service.ExchangeCodeForTokenAsync(
+            provider, "my-auth-code", "", "http://localhost:9999/");
+
+        capturedContent.Should().Contain("client_secret=test-yahoo-secret");
     }
 
     [Fact]
@@ -444,6 +575,7 @@ public class OAuthServiceTests : IDisposable
         // Verify all providers are loaded by checking each host
         service.FindProviderByHost("imap.gmail.com").Should().NotBeNull();
         service.FindProviderByHost("outlook.office365.com").Should().NotBeNull();
+        service.FindProviderByHost("imap.mail.yahoo.com").Should().NotBeNull();
     }
 
     #endregion

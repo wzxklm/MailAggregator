@@ -274,7 +274,7 @@ public partial class AddAccountViewModel : ObservableObject
         }
 
         // Step 1: Prepare authorization URL (pass email as login_hint)
-        var (authUrl, codeVerifier, listenerPort) = _oAuthService.PrepareAuthorization(provider, EmailAddress);
+        var (authUrl, codeVerifier, listenerPort, redirectUri) = _oAuthService.PrepareAuthorization(provider, EmailAddress);
 
         // Step 2: Open browser for user authorization
         OAuthStatus = "Opening browser for authorization...";
@@ -296,7 +296,6 @@ public partial class AddAccountViewModel : ObservableObject
 
         // Step 4: Exchange code for tokens
         OAuthStatus = "Exchanging authorization code for tokens...";
-        var redirectUri = $"http://localhost:{listenerPort}/";
         var tokens = await _oAuthService.ExchangeCodeForTokenAsync(provider, authCode, codeVerifier, redirectUri);
 
         OAuthStatus = "Authorization successful!";
