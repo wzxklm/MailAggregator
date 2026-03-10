@@ -34,13 +34,17 @@
 | `IImapConnectionService` | Singleton | `ImapConnectionService` |
 | `ISmtpConnectionService` | Singleton | `SmtpConnectionService` |
 | `IImapConnectionPool` | Singleton | `ImapConnectionPool` |
+| `ITwoFactorCodeService` | Singleton | `TwoFactorCodeService` |
 | `ISyncManager` | Singleton | `SyncManager` |
 | `IDbContextFactory` | Scoped | `MailAggregatorDbContext` |
 | `IEmailSyncService` | Scoped | `EmailSyncService` |
 | `IEmailSendService` | Scoped | `EmailSendService` |
 | `IAccountService` | Scoped | `AccountService` |
+| `ITwoFactorAccountService` | Scoped | `TwoFactorAccountService` |
 | `MainViewModel` | Transient | `MainViewModel` |
 | `MainWindow` | Transient | `MainWindow` |
+| `TwoFactorViewModel` | Transient | `TwoFactorViewModel` |
+| `AddTwoFactorViewModel` | Transient | `AddTwoFactorViewModel` |
 
 **Shutdown** (`OnExit`): Stop SyncManager → Release pool → Flush Serilog
 
@@ -145,6 +149,76 @@
 
 - Modal dialog, account list (email, host, auth type, enabled status)
 - Operations: add, edit, delete (with confirmation)
+
+---
+
+## TwoFactorWindow — `Views/TwoFactorWindow.xaml` + `ViewModels/TwoFactorViewModel.cs`
+
+**Non-modal window** opened from MainWindow toolbar ("2FA" button → `OpenTwoFactorCommand`).
+
+**Layout**: `DockPanel` with ListBox (account list) and bottom button bar (Add/Edit/Delete + status text).
+
+**ListBox item template**: Each item shows Issuer, Label, CurrentCode (Consolas 28pt), ProgressBar with remaining seconds. Copy button per item bound to `CopyCodeCommand` via `RelativeSource AncestorType=ListBox`.
+
+**Empty state**: DataTrigger on `Items.Count == 0` replaces ListBox template with placeholder text.
+
+**Code-behind**: `Loaded` → `vm.InitializeAsync()`, `Closed` → `vm.Dispose()`.
+
+**TwoFactorViewModel** (`ObservableObject`, `IDisposable`):
+- Constructor: receives `ITwoFactorCodeService` + `ILogger`, creates `DispatcherTimer` (1s interval)
+- `InitializeAsync()`: loads accounts + starts timer
+- `Dispose()`: stops timer + unsubscribes tick handler
+
+**Key commands**:
+| Command | Action |
+|---------|--------|
+| `LoadAccountsCommand` | Create scope → `ITwoFactorAccountService.GetAllAsync()` → decrypt secrets → build `TwoFactorDisplayItem` collection |
+| `CopyCodeCommand` | Copy `SelectedItem.CurrentCode` (stripped spaces) to clipboard |
+| `AddAccountCommand` | Open `AddTwoFactorWindow` (modal) → reload on success |
+| `EditAccountCommand` | Open `AddTwoFactorWindow` with `LoadForEdit()` → reload on success |
+| `DeleteAccountCommand` | Confirmation dialog → `ITwoFactorAccountService.DeleteAsync()` → remove from list |
+
+**Scope-based service resolution**: `ITwoFactorAccountService` is Scoped, so each command creates a DI scope via `App.Services.CreateScope()` to resolve it (same pattern as other scoped services).
+
+---
+
+## AddTwoFactorWindow — `Views/AddTwoFactorWindow.xaml` + `ViewModels/AddTwoFactorViewModel.cs`
+
+**Modal dialog** for adding or editing 2FA accounts. Title bound to `WindowTitle` (dynamic: "Add 2FA Account" / "Edit 2FA Account").
+
+**Two input modes** (add mode only, toggled by RadioButton):
+1. **Manual Input**: Issuer, Label, Secret (Base32), Advanced Settings (Algorithm ComboBox, Digits, Period)
+2. **URI Import**: Paste `otpauth://` URI → Parse button → auto-fills all fields
+
+**Edit mode**: Shows only Issuer and Label fields (secret is immutable). Activated via `LoadForEdit(TwoFactorAccount)`.
+
+**Code-behind**: `Loaded` → subscribe to `vm.CloseRequested` → set `DialogResult` + close window.
+
+**AddTwoFactorViewModel** (`ObservableObject`):
+
+**Key commands**:
+| Command | Action |
+|---------|--------|
+| `ParseUriCommand` | `ITwoFactorCodeService.ParseOtpAuthUri()` → populate fields |
+| `SaveCommand` | Create scope → add (manual or URI) or update → set `DialogResult = true` → `CloseRequested` |
+
+**CloseRequested pattern**: ViewModel exposes `event Action? CloseRequested`. On save success, fires event. Code-behind subscribes and sets `DialogResult` + calls `Close()`. Same pattern used for modal dialog result passing.
+
+**Validation**: Requires Issuer (always), Secret (add mode only). URI mode delegates validation to `AddFromUriAsync`.
+
+---
+
+## TwoFactorDisplayItem — `ViewModels/TwoFactorDisplayItem.cs`
+
+**Display wrapper** around `TwoFactorAccount` for real-time TOTP display.
+
+**Properties** (`ObservableObject`):
+- `Account` — underlying `TwoFactorAccount` entity
+- `CurrentCode` — formatted TOTP code (e.g. "123 456" for 6-digit, "1234 5678" for 8-digit)
+- `RemainingSeconds` — seconds until code expires
+- `ProgressPercentage` — `RemainingSeconds / Period * 100` (drives ProgressBar)
+
+**`UpdateCode()`**: Called every 1s by `TwoFactorViewModel`'s DispatcherTimer. Only regenerates code when period boundary is crossed (remaining went up) or on first call, to avoid unnecessary computation.
 
 ---
 

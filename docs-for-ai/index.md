@@ -12,7 +12,7 @@ MailAggregator — Windows desktop email aggregation client, direct IMAP/SMTP, n
 | Architecture | MVVM (CommunityToolkit.Mvvm) + DI                       |
 | Platform     | Windows x64 (Core cross-platform, Desktop Windows-only) |
 | Version      | v1.0.8                                                  |
-| Tests        | 193 xUnit tests                                         |
+| Tests        | 237 xUnit tests                                         |
 
 Supported providers: Gmail, Microsoft, Yahoo, AOL, Fastmail, any standard IMAP/SMTP server.
 
@@ -43,6 +43,7 @@ Supported providers: Gmail, Microsoft, Yahoo, AOL, Fastmail, any standard IMAP/S
 │       ├── mail.md                                 # Discovery + Mail + Sync + Account
 │       ├── desktop.md                              # WPF UI layer
 │       ├── tests.md                                # Test layer
+│       ├── two-factor.md                           # 2FA TOTP authenticator
 │       └── workflows.md                            # Core workflow diagrams
 │
 └── src/
@@ -60,8 +61,10 @@ Supported providers: Gmail, Microsoft, Yahoo, AOL, Fastmail, any standard IMAP/S
     │   │   ├── MailFolder.cs                       # IMAP folder (SpecialUse/UidValidity)
     │   │   ├── OAuthProviderConfig.cs              # OAuth provider config model
     │   │   ├── OAuthTokenResult.cs                 # Token response
+    │   │   ├── OtpAlgorithm.cs                    # TOTP hash algorithm (Sha1/Sha256/Sha512)
     │   │   ├── ServerConfiguration.cs              # Auto-discovered server config
-    │   │   └── SpecialFolderType.cs                # Inbox/Sent/Drafts/Trash/Junk/Archive
+    │   │   ├── SpecialFolderType.cs                # Inbox/Sent/Drafts/Trash/Junk/Archive
+    │   │   └── TwoFactorAccount.cs                # 2FA TOTP account entity
     │   ├── Data/
     │   │   ├── MailAggregatorDbContext.cs           # EF Core DbContext (SQLite)
     │   │   └── DatabaseInitializer.cs              # EnsureCreatedAsync
@@ -83,6 +86,9 @@ Supported providers: Gmail, Microsoft, Yahoo, AOL, Fastmail, any standard IMAP/S
     │       │   └── IEmailSendService.cs / EmailSendService.cs                         # Send/reply/forward
     │       ├── AccountManagement/
     │       │   └── IAccountService.cs / AccountService.cs                             # Account CRUD
+    │       ├── TwoFactor/
+    │       │   ├── ITwoFactorCodeService.cs / TwoFactorCodeService.cs                 # TOTP code generation
+    │       │   └── ITwoFactorAccountService.cs / TwoFactorAccountService.cs           # 2FA account CRUD
     │       └── Sync/
     │           └── ISyncManager.cs / SyncManager.cs                                   # IMAP IDLE background sync
     │
@@ -96,18 +102,23 @@ Supported providers: Gmail, Microsoft, Yahoo, AOL, Fastmail, any standard IMAP/S
     │   │   ├── AddAccountViewModel.cs              # 5-step wizard + OAuth flow
     │   │   ├── AccountListViewModel.cs             # Account CRUD UI
     │   │   ├── ComposeViewModel.cs                 # New/Reply/Forward
+    │   │   ├── TwoFactorDisplayItem.cs             # 2FA code display wrapper
+    │   │   ├── TwoFactorViewModel.cs               # 2FA main window ViewModel
+    │   │   ├── AddTwoFactorViewModel.cs            # 2FA add/edit dialog ViewModel
     │   │   └── NotificationHelper.cs               # Toast notifications
     │   ├── Views/
     │   │   ├── AddAccountWindow.xaml/.cs            # Account wizard
     │   │   ├── AccountListWindow.xaml/.cs           # Account management
-    │   │   └── ComposeWindow.xaml/.cs               # Compose email
+    │   │   ├── ComposeWindow.xaml/.cs               # Compose email
+    │   │   ├── TwoFactorWindow.xaml/.cs             # 2FA main window
+    │   │   └── AddTwoFactorWindow.xaml/.cs          # 2FA add/edit dialog
     │   └── Converters/
     │       ├── BoolToFontWeightConverter.cs         # !IsRead → Bold
     │       ├── BoolToVisibilityConverter.cs         # Bool → Visible/Collapsed
     │       ├── NullToVisibilityConverter.cs         # Null → Collapsed
     │       └── FileSizeConverter.cs                 # Bytes → "1.5 MB"
     │
-    └── MailAggregator.Tests/                       # ═══ Tests (net8.0, 193 tests) ═══
+    └── MailAggregator.Tests/                       # ═══ Tests (net8.0, 237 tests) ═══
         ├── MailAggregator.Tests.csproj
         ├── Data/MailAggregatorDbContextTests.cs                        # [6]
         └── Services/
@@ -115,6 +126,8 @@ Supported providers: Gmail, Microsoft, Yahoo, AOL, Fastmail, any standard IMAP/S
             ├── Discovery/AutoDiscoveryServiceTests.cs                   # [35]
             ├── Mail/{EmailSync,ImapConnection,EmailSend}ServiceTests.cs # [9+4+29]
             ├── AccountManagement/AccountServiceTests.cs                 # [22]
+            ├── TwoFactor/TwoFactorCodeServiceTests.cs                   # [20]
+            ├── TwoFactor/TwoFactorAccountServiceTests.cs                # [24]
             └── Sync/SyncManagerTests.cs                                 # [30]
 ```
 
@@ -122,11 +135,11 @@ Supported providers: Gmail, Microsoft, Yahoo, AOL, Fastmail, any standard IMAP/S
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  WPF UI Layer (MailAggregator.Desktop)                  │
-│  ┌──────────────┐  ┌───────────────┐  ┌──────────────┐ │
-│  │ MainWindow   │  │ AddAccount    │  │ Compose      │ │
-│  │ + ViewModel  │  │ Window + VM   │  │ Window + VM  │ │
-│  └──────┬───────┘  └──────┬────────┘  └──────┬───────┘ │
+│  WPF UI Layer (MailAggregator.Desktop)                              │
+│  ┌──────────────┐  ┌───────────┐  ┌──────────┐  ┌──────────────┐   │
+│  │ MainWindow   │  │ AddAccount│  │ Compose  │  │ TwoFactor    │   │
+│  │ + ViewModel  │  │ Window+VM │  │ Window+VM│  │ Window + VM  │   │
+│  └──────┬───────┘  └──────┬────┘  └──────┬───┘  └──────┬───────┘   │
 ├─────────┼─────────────────┼───────────────────┼─────────┤
 │  Core Service Layer (MailAggregator.Core)                │
 │  ┌──────┴───────┐  ┌──────┴────────┐  ┌──────┴───────┐ │
@@ -159,4 +172,5 @@ Supported providers: Gmail, Microsoft, Yahoo, AOL, Fastmail, any standard IMAP/S
 | Mail Services   | `chapters/mail.md`      | Connection, sync, send, discovery, account mgmt, concurrency |
 | Desktop UI      | `chapters/desktop.md`   | UI changes, ViewModels, views, styles                        |
 | Tests           | `chapters/tests.md`     | Adding/modifying tests                                       |
+| Two-Factor      | `chapters/two-factor.md`| 2FA TOTP authenticator design & implementation               |
 | Workflows       | `chapters/workflows.md` | Understanding end-to-end flows                               |

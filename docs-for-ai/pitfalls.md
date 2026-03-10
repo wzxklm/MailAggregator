@@ -13,6 +13,8 @@
 - **同一 DbContext 内 Attach 前必须检查 ChangeTracker**：`FetchAndCacheMessagesAsync` 保存后实体仍被跟踪（`Unchanged` 状态），后续 `SyncFlagsAndDetectDeletionsAsync` 若对同 Id 实体调用 `Attach` 会抛 `InvalidOperationException`。修复模式：先查 `ChangeTracker.Entries<T>()` 构建字典，已跟踪则直接更新 tracked entity，否则 Attach 新桩对象。参见 `SetMessageReadAsync`、`FetchMessageBodyAsync`、`SyncFlagsAndDetectDeletionsAsync`
 - **避免 `Update()` 级联图遍历**：`dbContext.Folders.Update(folder)` 会级联到 `Messages` 导航属性，若其中有已跟踪实体则冲突。改用 `Attach` + 逐个 `Property(...).IsModified = true` 仅标记需要更新的标量属性
 - **批量保存**：大量消息同步时每 50 条保存一次，避免 pending changes 过多导致内存飙升
+- **新增实体必须手动建表**：`EnsureCreatedAsync()` 仅在数据库文件不存在时创建全部表。对已有数据库新增 `DbSet` 不会自动建表。必须在 `DatabaseInitializer.InitializeAsync` 中追加 `ExecuteSqlRawAsync("CREATE TABLE IF NOT EXISTS ...")` 手动建表。列类型须与 EF Core 约定一致：`DateTimeOffset` → `INTEGER`（UTC ticks，对应 `DateTimeOffsetToLongConverter`），枚举 → `INTEGER`
+- **新增带时间戳实体须扩展 StampTimestamps**：`MailAggregatorDbContext.StampTimestamps()` 按实体类型逐个处理。新增含 `CreatedAt`/`UpdatedAt` 的实体时，必须在该方法中添加对应的 `ChangeTracker.Entries<T>()` 循环，否则时间戳不会自动填充
 
 ## MailKit / 邮件协议
 
@@ -42,6 +44,8 @@
 - **UI 线程更新**：后台事件回调中修改 ObservableCollection 必须用 `Dispatcher.Invoke()` 切到 UI 线程
 - **多账户并发操作须逐个隔离错误**：`LoadAccountsAsync` 中每个账户的文件夹同步用独立 try/catch 包裹，单个账户的 IMAP 错误（如认证失败、服务器不可达）不阻塞其他账户加载。任何新增的多账户循环操作都应遵循此模式
 - **Desktop 项目需要 `UseWindowsForms=true`**：NotifyIcon（Toast 通知）依赖 WinForms，csproj 中必须启用
+- **`UseWindowsForms` 导致类型歧义**：`MessageBox`、`Clipboard` 等类在 `System.Windows` 和 `System.Windows.Forms` 中都存在。必须用完全限定名 `System.Windows.MessageBox.Show()`、`System.Windows.Clipboard.SetText()`，否则编译错误 CS0104
+- **`BoolToVisibilityConverter` 仅用于 `Visibility` 绑定**：该转换器返回 `Visibility` 枚举，不可用于 `RadioButton.IsChecked`（`bool?` 类型）等布尔属性绑定。布尔属性需用原生绑定或专用 bool 转换器
 
 ## 邮件发现 & 同步
 
@@ -59,6 +63,12 @@
 - **指数退避须含抖动**：`CalculateBackoffDelay` 在退避延迟上添加 ±25% 随机抖动（`JitterFactor=0.25`），防止多账户同时重连（thundering herd）
 - **网络感知重连**：`SyncManager` 订阅 `NetworkChange.NetworkAvailabilityChanged`，网络断开时暂停退避循环（`ManualResetEventSlim`），恢复时立即重连（重置 `reconnectAttempt=0`）。不要用冗余的 volatile bool，直接用 `_networkAvailable.IsSet`
 - **AutoDiscovery 并行请求须取消剩余**：Level 1-3 并行发起后，首个成功结果通过 `CancellationTokenSource.CancelAsync()` 取消其他正在进行的 HTTP 请求，避免浪费资源
+
+## 2FA / TOTP
+
+- **PK 查找用 `FindAsync` 而非 `FirstOrDefaultAsync`**：`FindAsync` 先查 ChangeTracker 后查数据库，适合单主键查找且避免与已跟踪实体冲突。`TwoFactorAccountService.UpdateAsync`/`DeleteAsync` 均使用此模式
+- **Secret 存储前须 `ToUpperInvariant()` 标准化**：Base32 不区分大小写，但用户输入可能混合大小写。在验证和加密前统一转换为大写，确保解密后 TOTP 生成一致。`ParseOtpAuthUri` 同样对 secret 参数做大写标准化
+- **TOTP 密钥字节须零化清理**：`Base32Encoding.ToBytes` 解码后的密钥字节数组用完后必须调用 `CryptographicOperations.ZeroMemory` 清理，防止内存中残留敏感数据。使用 `try/finally` 确保异常路径也能清理
 
 ## 架构约定
 
