@@ -11,7 +11,6 @@ MailAggregator — Windows desktop email aggregation client, direct IMAP/SMTP, n
 | Stack        | C# / .NET 8 / WPF / MailKit / EF Core SQLite / WebView2 |
 | Architecture | MVVM (CommunityToolkit.Mvvm) + DI                       |
 | Platform     | Windows x64 (Core cross-platform, Desktop Windows-only) |
-| Version      | v1.0.8                                                  |
 | Tests        | 237 xUnit tests                                         |
 
 Supported providers: Gmail, Microsoft, Yahoo, AOL, Fastmail, any standard IMAP/SMTP server.
