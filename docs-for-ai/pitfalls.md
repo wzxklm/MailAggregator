@@ -44,6 +44,8 @@
 - **UI 线程更新**：后台事件回调中修改 ObservableCollection 必须用 `Dispatcher.Invoke()` 切到 UI 线程
 - **多账户并发操作须逐个隔离错误**：`LoadAccountsAsync` 中每个账户的文件夹同步用独立 try/catch 包裹，单个账户的 IMAP 错误（如认证失败、服务器不可达）不阻塞其他账户加载。任何新增的多账户循环操作都应遵循此模式
 - **Desktop 项目需要 `UseWindowsForms=true`**：NotifyIcon（Toast 通知）依赖 WinForms，csproj 中必须启用
+- **`UseWindowsForms` 导致类型歧义**：`MessageBox`、`Clipboard` 等类在 `System.Windows` 和 `System.Windows.Forms` 中都存在。必须用完全限定名 `System.Windows.MessageBox.Show()`、`System.Windows.Clipboard.SetText()`，否则编译错误 CS0104
+- **`BoolToVisibilityConverter` 仅用于 `Visibility` 绑定**：该转换器返回 `Visibility` 枚举，不可用于 `RadioButton.IsChecked`（`bool?` 类型）等布尔属性绑定。布尔属性需用原生绑定或专用 bool 转换器
 
 ## 邮件发现 & 同步
 

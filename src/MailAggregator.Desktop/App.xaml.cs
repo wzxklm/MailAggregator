@@ -7,6 +7,7 @@ using MailAggregator.Core.Services.Auth;
 using MailAggregator.Core.Services.Discovery;
 using MailAggregator.Core.Services.Mail;
 using MailAggregator.Core.Services.Sync;
+using MailAggregator.Core.Services.TwoFactor;
 using MailAggregator.Desktop.ViewModels;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -105,6 +106,10 @@ public partial class App : System.Windows.Application
         // Account management
         services.AddScoped<IAccountService, AccountService>();
 
+        // Two-factor authentication
+        services.AddSingleton<ITwoFactorCodeService, TwoFactorCodeService>();
+        services.AddScoped<ITwoFactorAccountService, TwoFactorAccountService>();
+
         // Sync manager
         services.AddSingleton<ISyncManager, SyncManager>();
 
@@ -113,6 +118,8 @@ public partial class App : System.Windows.Application
         services.AddTransient<AccountListViewModel>();
         services.AddTransient<AddAccountViewModel>();
         services.AddTransient<ComposeViewModel>();
+        services.AddTransient<TwoFactorViewModel>();
+        services.AddTransient<AddTwoFactorViewModel>();
 
         // Windows
         services.AddTransient<MainWindow>();

@@ -403,6 +403,14 @@ public partial class MainViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand]
+    private void OpenTwoFactor()
+    {
+        var vm = App.Services.GetRequiredService<TwoFactorViewModel>();
+        var window = new Views.TwoFactorWindow { DataContext = vm };
+        window.Show();
+    }
+
+    [RelayCommand]
     private void OpenAccountSettings()
     {
         // Cancel any in-flight load so stale IMAP connections (e.g. using old proxy

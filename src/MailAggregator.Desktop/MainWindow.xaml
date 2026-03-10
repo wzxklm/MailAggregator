@@ -30,6 +30,9 @@
                 <Separator />
                 <Button Content="Accounts" Style="{StaticResource ToolbarButton}"
                         Command="{Binding OpenAccountSettingsCommand}" />
+                <Separator />
+                <Button Content="2FA" Style="{StaticResource ToolbarButton}"
+                        Command="{Binding OpenTwoFactorCommand}" />
             </ToolBar>
         </ToolBarTray>
 

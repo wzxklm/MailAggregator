@@ -102,11 +102,16 @@ Supported providers: Gmail, Microsoft, Yahoo, AOL, Fastmail, any standard IMAP/S
     │   │   ├── AddAccountViewModel.cs              # 5-step wizard + OAuth flow
     │   │   ├── AccountListViewModel.cs             # Account CRUD UI
     │   │   ├── ComposeViewModel.cs                 # New/Reply/Forward
+    │   │   ├── TwoFactorDisplayItem.cs             # 2FA code display wrapper
+    │   │   ├── TwoFactorViewModel.cs               # 2FA main window ViewModel
+    │   │   ├── AddTwoFactorViewModel.cs            # 2FA add/edit dialog ViewModel
     │   │   └── NotificationHelper.cs               # Toast notifications
     │   ├── Views/
     │   │   ├── AddAccountWindow.xaml/.cs            # Account wizard
     │   │   ├── AccountListWindow.xaml/.cs           # Account management
-    │   │   └── ComposeWindow.xaml/.cs               # Compose email
+    │   │   ├── ComposeWindow.xaml/.cs               # Compose email
+    │   │   ├── TwoFactorWindow.xaml/.cs             # 2FA main window
+    │   │   └── AddTwoFactorWindow.xaml/.cs          # 2FA add/edit dialog
     │   └── Converters/
     │       ├── BoolToFontWeightConverter.cs         # !IsRead → Bold
     │       ├── BoolToVisibilityConverter.cs         # Bool → Visible/Collapsed
@@ -130,11 +135,11 @@ Supported providers: Gmail, Microsoft, Yahoo, AOL, Fastmail, any standard IMAP/S
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  WPF UI Layer (MailAggregator.Desktop)                  │
-│  ┌──────────────┐  ┌───────────────┐  ┌──────────────┐ │
-│  │ MainWindow   │  │ AddAccount    │  │ Compose      │ │
-│  │ + ViewModel  │  │ Window + VM   │  │ Window + VM  │ │
-│  └──────┬───────┘  └──────┬────────┘  └──────┬───────┘ │
+│  WPF UI Layer (MailAggregator.Desktop)                              │
+│  ┌──────────────┐  ┌───────────┐  ┌──────────┐  ┌──────────────┐   │
+│  │ MainWindow   │  │ AddAccount│  │ Compose  │  │ TwoFactor    │   │
+│  │ + ViewModel  │  │ Window+VM │  │ Window+VM│  │ Window + VM  │   │
+│  └──────┬───────┘  └──────┬────┘  └──────┬───┘  └──────┬───────┘   │
 ├─────────┼─────────────────┼───────────────────┼─────────┤
 │  Core Service Layer (MailAggregator.Core)                │
 │  ┌──────┴───────┐  ┌──────┴────────┐  ┌──────┴───────┐ │

@@ -33,7 +33,7 @@ Design doc: `docs-for-ai/chapters/two-factor.md`
 | ------- | -------------------------------------------------------------------------------- | ----------- |
 | Phase 1 | Core data layer — enum, entity, DbContext, DatabaseInitializer, OtpNet package   | Completed   |
 | Phase 2 | Core services — TwoFactorCodeService, TwoFactorAccountService, tests             | Completed   |
-| Phase 3 | Desktop UI — DisplayItem, ViewModel, windows, MainWindow button, DI registration | Not started |
+| Phase 3 | Desktop UI — DisplayItem, ViewModel, windows, MainWindow button, DI registration | Completed   |
 | Phase 4 | Validation — `dotnet test` full test suite                                       | Not started |
 
 Update this table after each phase is completed.
