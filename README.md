@@ -2,6 +2,10 @@
 
 Windows desktop email client that aggregates multiple email accounts into a single interface. Connects directly via IMAP/SMTP — no backend server required.
 
+## Demo
+
+![Demo](demo.png)
+
 ## Features
 
 - **Multi-account** — manage Gmail, Microsoft, Yahoo, AOL, Fastmail, and any standard IMAP/SMTP server in one place
