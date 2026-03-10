@@ -153,10 +153,10 @@ public partial class AddAccountViewModel : ObservableObject
 
                 DiscoveryStatus = $"Found: {config.ImapHost}:{config.ImapPort}";
 
-                // Check if OAuth is available
-                IsOAuthAvailable = _oAuthService.FindProviderByHost(config.ImapHost) != null;
-                IsOAuthSelected = IsOAuthAvailable;
-                SelectedAuthType = IsOAuthAvailable ? AuthType.OAuth2 : AuthType.Password;
+                // Check if OAuth is available (OnImapHostChanged already fired
+                // from setting ImapHost above, but discovery may set a different
+                // host than what triggered the change, so re-check explicitly)
+                UpdateOAuthAvailability(config.ImapHost);
 
                 CurrentStep = 2; // Move to auth step
             }
@@ -242,7 +242,7 @@ public partial class AddAccountViewModel : ObservableObject
 
             // Create account
             var passwordForAuth = SelectedAuthType == AuthType.Password ? Password : null;
-            var account = await _accountService.AddAccountAsync(EmailAddress, passwordForAuth, manualConfig);
+            var account = await _accountService.AddAccountAsync(EmailAddress, passwordForAuth, manualConfig, SelectedAuthType);
 
             // Store OAuth tokens on the account
             if (oauthTokens != null)
@@ -314,6 +314,22 @@ public partial class AddAccountViewModel : ObservableObject
             EmailAddress, tokens.ExpiresAt);
 
         return tokens;
+    }
+
+    /// <summary>
+    /// Re-check OAuth availability whenever the user changes the IMAP host
+    /// (e.g., on the manual config screen after auto-discovery fails).
+    /// </summary>
+    partial void OnImapHostChanged(string value)
+    {
+        UpdateOAuthAvailability(value);
+    }
+
+    private void UpdateOAuthAvailability(string imapHost)
+    {
+        IsOAuthAvailable = _oAuthService.FindProviderByHost(imapHost) != null;
+        IsOAuthSelected = IsOAuthAvailable;
+        SelectedAuthType = IsOAuthAvailable ? AuthType.OAuth2 : AuthType.Password;
     }
 
     private void ApplyProxySettings(Account account)

@@ -40,7 +40,7 @@ public class AccountService : IAccountService
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
-    public async Task<Account> AddAccountAsync(string emailAddress, string? password, ServerConfiguration? manualConfig = null, CancellationToken cancellationToken = default)
+    public async Task<Account> AddAccountAsync(string emailAddress, string? password, ServerConfiguration? manualConfig = null, AuthType? authType = null, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(emailAddress))
             throw new ArgumentException("Email address cannot be null or empty.", nameof(emailAddress));
@@ -85,16 +85,16 @@ public class AccountService : IAccountService
             IsEnabled = true
         };
 
-        // Step 4: Determine auth type by checking for OAuth provider
+        // Step 4: Determine auth type — use caller's explicit choice, or auto-detect from host
         var oauthProvider = _oAuthService.FindProviderByHost(serverConfig.ImapHost);
+        account.AuthType = authType
+            ?? (oauthProvider is not null ? AuthType.OAuth2 : AuthType.Password);
 
         // Step 5/6: Configure authentication
-        if (oauthProvider is not null)
+        if (account.AuthType == AuthType.OAuth2)
         {
-            // OAuth provider found - mark the auth type (OAuth flow is UI-driven)
-            account.AuthType = AuthType.OAuth2;
-            _logger.Information("OAuth provider '{ProviderName}' detected for {EmailAddress}",
-                oauthProvider.Name, emailAddress);
+            _logger.Information("OAuth2 authentication{Provider} for {EmailAddress}",
+                oauthProvider != null ? $" (provider: {oauthProvider.Name})" : "", emailAddress);
         }
         else
         {

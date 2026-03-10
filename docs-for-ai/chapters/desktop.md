@@ -123,7 +123,9 @@
 | 3 | Manual server config (IMAP/SMTP + SOCKS5 proxy) |
 | 4 | Complete |
 
-**Server config passthrough**: After discovery/manual entry, the ViewModel builds a `ServerConfiguration` from the UI fields and passes it as `manualConfig` to `AddAccountAsync`, skipping redundant auto-discovery on account creation.
+**Server config passthrough**: After discovery/manual entry, the ViewModel builds a `ServerConfiguration` from the UI fields and passes it as `manualConfig` to `AddAccountAsync`, skipping redundant auto-discovery on account creation. The `SelectedAuthType` is also passed explicitly so the user's auth choice is preserved (prevents auto-detection from overriding it).
+
+**OAuth availability tracking**: `UpdateOAuthAvailability(imapHost)` checks `FindProviderByHost` and sets `IsOAuthAvailable`, `IsOAuthSelected`, and `SelectedAuthType`. Called from two places: `OnImapHostChanged` (fires when user edits IMAP host on manual config screen) and after auto-discovery completes (explicit re-check in case the discovered host differs from what triggered the property change).
 
 **OAuth flow** (`RunOAuthFlowAsync`):
 1. `FindProviderByHost()` → 2. `PrepareAuthorization()` → 3. Open browser → 4. `WaitForAuthorizationCodeAsync()` → 5. `ExchangeCodeForTokenAsync()` → 6. Store encrypted tokens

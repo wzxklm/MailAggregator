@@ -262,6 +262,71 @@ public class AccountServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task AddAccountAsync_WithExplicitPasswordAuthType_DoesNotOverrideToOAuth()
+    {
+        // Arrange — OAuth-capable host, but caller explicitly requests Password auth
+        var email = "user@company.com";
+        var password = "s3cret";
+        var oauthHostConfig = new ServerConfiguration
+        {
+            ImapHost = "outlook.office365.com",
+            ImapPort = 993,
+            ImapEncryption = ConnectionEncryptionType.Ssl,
+            SmtpHost = "smtp-mail.outlook.com",
+            SmtpPort = 587,
+            SmtpEncryption = ConnectionEncryptionType.StartTls
+        };
+
+        // FindProviderByHost would return a provider, but the explicit authType should win
+        _mockOAuth
+            .Setup(x => x.FindProviderByHost("outlook.office365.com"))
+            .Returns(new OAuthProviderConfig { Name = "Microsoft", ServerHosts = new List<string> { "outlook.office365.com" }, ClientId = "test" });
+
+        var mockClient = new Mock<ImapClient>();
+        mockClient.Setup(c => c.IsConnected).Returns(true);
+        mockClient.Setup(c => c.DisconnectAsync(true, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        _mockImapConnection
+            .Setup(x => x.ConnectAsync(It.IsAny<Core.Models.Account>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(mockClient.Object);
+
+        // Act — pass explicit AuthType.Password
+        var result = await _service.AddAccountAsync(email, password, oauthHostConfig, AuthType.Password);
+
+        // Assert — should be Password, NOT OAuth2
+        result.AuthType.Should().Be(AuthType.Password);
+        _mockPasswordAuth.Verify(
+            x => x.StorePassword(It.IsAny<Core.Models.Account>(), password), Times.Once);
+        _mockImapConnection.Verify(
+            x => x.ConnectAsync(It.IsAny<Core.Models.Account>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task AddAccountAsync_WithExplicitOAuthAuthType_SetsOAuth2()
+    {
+        // Arrange
+        var email = "user@gmail.com";
+        var oauthHostConfig = new ServerConfiguration
+        {
+            ImapHost = "imap.gmail.com",
+            ImapPort = 993,
+            SmtpHost = "smtp.gmail.com",
+            SmtpPort = 587
+        };
+
+        // Act — pass explicit AuthType.OAuth2
+        var result = await _service.AddAccountAsync(email, null, oauthHostConfig, AuthType.OAuth2);
+
+        // Assert
+        result.AuthType.Should().Be(AuthType.OAuth2);
+        _mockPasswordAuth.Verify(
+            x => x.StorePassword(It.IsAny<Core.Models.Account>(), It.IsAny<string>()), Times.Never);
+        _mockImapConnection.Verify(
+            x => x.ConnectAsync(It.IsAny<Core.Models.Account>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task AddAccountAsync_DuplicateEmail_ThrowsInvalidOperationException()
     {
         // Arrange - pre-insert an account

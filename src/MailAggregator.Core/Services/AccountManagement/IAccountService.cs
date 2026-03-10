@@ -11,9 +11,10 @@ public interface IAccountService
     /// <param name="emailAddress">The email address to add.</param>
     /// <param name="password">The plain-text password (null for OAuth accounts).</param>
     /// <param name="manualConfig">Pre-configured server settings; when provided, auto-discovery is skipped.</param>
+    /// <param name="authType">Explicit auth type chosen by the caller; when null, auto-detected from IMAP host.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The saved Account entity.</returns>
-    Task<Account> AddAccountAsync(string emailAddress, string? password, ServerConfiguration? manualConfig = null, CancellationToken cancellationToken = default);
+    Task<Account> AddAccountAsync(string emailAddress, string? password, ServerConfiguration? manualConfig = null, AuthType? authType = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Updates an existing account's configuration (server settings, proxy, display name, etc.).

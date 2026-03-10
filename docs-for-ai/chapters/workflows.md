@@ -17,11 +17,12 @@ AutoDiscoveryService.DiscoverAsync(emailAddress)
     └─ Level 5: null (manual config)
     │
     ▼
-OAuthService.FindProviderByHost(imapHost)
-    ├─ Found → UI shows "OAuth 2.0" option
+UpdateOAuthAvailability(imapHost)
+    ├─ FindProviderByHost() found → UI shows "OAuth 2.0" option (pre-selected)
     └─ Not found → UI shows "Password" option
+    │ (also re-checked on manual IMAP host change via OnImapHostChanged)
     │
-    ▼ (user saves)
+    ▼ (user saves — SelectedAuthType passed explicitly to AddAccountAsync)
     │
     ├── OAuth path ─────────────────────────────┐
     │   PrepareAuthorization() → auth URL + PKCE │

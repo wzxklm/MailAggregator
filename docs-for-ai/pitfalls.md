@@ -33,6 +33,7 @@
 - **令牌刷新宽限期**：令牌过期前 60 秒就触发刷新（`TokenRefreshGracePeriod`），避免请求时恰好过期
 - **令牌刷新并发保护**：IMAP 和 SMTP 可能同时刷新同一账户 token，Google 等提供商会使旧 refresh token 失效。`MailConnectionHelper` 使用 per-account `SemaphoreSlim` + double-check pattern 防止并发刷新。删除账户时必须调用 `RemoveTokenRefreshLock` 清理信号量
 - **invalid_grant 不可重试**：`OAuthService` 检测 `invalid_grant` 后抛出 `OAuthReauthenticationRequiredException`，`SyncManager` 捕获后直接 break 退出同步循环（不进入重连退避），用户必须重新授权
+- **OAuth 检测必须由 ViewModel 驱动，AccountService 不应覆盖**：`AddAccountAsync` 接受显式 `authType` 参数，由 ViewModel 传入。ViewModel 通过 `UpdateOAuthAvailability(imapHost)` 在发现成功或用户手动修改 IMAP host 时统一检测 OAuth 可用性。禁止在 AccountService 中独立覆盖调用方的 auth type 决定，否则会出现「账户标记为 OAuth2 但无 token」的 bug
 
 ## WPF / UI
 
