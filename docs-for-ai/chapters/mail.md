@@ -122,8 +122,8 @@ Uses `IDbContextFactory<MailAggregatorDbContext>` — each operation creates its
 
 ## Account Management — `Services/AccountManagement/AccountService.cs`
 
-- **AddAccountAsync(emailAddress, password?)** — flow:
-  0. Check for duplicate email (+ unique DB index on `EmailAddress`) → 1. AutoDiscovery → 2. Create Account entity → 3. Check OAuth provider → 4. OAuth → set AuthType=OAuth2 / 5. Password → encrypt & store → 6. Validate IMAP (password only) → 7. Save to DB within explicit transaction (rollback on failure to prevent orphaned OAuth accounts)
+- **AddAccountAsync(emailAddress, password?, manualConfig?)** — flow:
+  0. Check for duplicate email (+ unique DB index on `EmailAddress`) → 1. Use `manualConfig` if provided, otherwise AutoDiscovery → 2. Create Account entity → 3. Check OAuth provider → 4. OAuth → set AuthType=OAuth2 / 5. Password → encrypt & store → 6. Validate IMAP (password only) → 7. Save to DB within explicit transaction (rollback on failure to prevent orphaned OAuth accounts)
 - **UpdateAccountAsync** — validates host/port (non-empty host, port 1-65535 for both IMAP and SMTP). Before calling `Update()`, detaches any existing tracked Account entity from the ChangeTracker to avoid "already being tracked" conflicts (same pattern as `DeleteAccountAsync`). Saves to DB, then restarts sync if the account is currently syncing (stop → remove pool connections → start with new config)
 - **DeleteAccountAsync** — full cleanup: 1. Stop SyncManager for account → 2. Release ImapConnectionPool → 3. Remove token refresh lock (`MailConnectionHelper.RemoveTokenRefreshLock`) → 4. Delete attachment files from disk → 5. Detach the initially-loaded account entity and re-fetch fresh before deletion (the sync loop uses its own DbContext and may have modified the account row, e.g. OAuth token refresh, causing stale tracking state → `DbUpdateConcurrencyException`) → 6. Cascade delete DB entities (account + folders + messages + attachments). If re-fetch returns null the account was already deleted; method returns early
 - **GetAllAccountsAsync** / **GetAccountByIdAsync** (both use `AsNoTracking` for consistency)

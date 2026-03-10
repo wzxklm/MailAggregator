@@ -47,6 +47,7 @@
 - **MX 域名提取须处理 ccSLD**：`co.uk`、`com.au` 等 country-code second-level domain 需要取 3 级域名（如 `yahoo.co.uk`），否则会提取到无意义的 `co.uk`。参见 `TwoLevelTlds` HashSet
 - **DNS 查询使用 DnsClient.NET**：不再通过 `nslookup` 进程解析 MX/SRV 记录，改用 `ILookupClient`（DnsClient 库）。构造函数接受 `ILookupClient` 便于测试注入。DNS 超时通过 `LookupClientOptions.Timeout` 配置（10s）
 - **RFC 6186 SRV 记录发现（Level 5）**：自动发现 fallback 链新增 SRV 查询（`_imaps._tcp`→`_imap._tcp`→`_submission._tcp`），SMTP SRV 查询与 IMAP 并行执行以减少延迟
+- **添加账户时须传 `manualConfig` 跳过冗余发现**：`AddAccountViewModel` 在调用 `AddAccountAsync` 前已通过自动发现或手动输入获得了服务器配置，UI 字段已填好。调用时必须将 UI 字段构建为 `ServerConfiguration` 并通过 `manualConfig` 参数传入，否则 `AccountService` 会再次执行自动发现（重复网络请求、延迟增加，且手动修改的配置会被覆盖）
 - **删除账户须清理运行时资源**：先停后台同步（`StopAccountSyncAsync`）、释放连接池（`RemoveAccount`）、清理 token 刷新锁（`RemoveTokenRefreshLock`）、删磁盘附件，最后才删数据库记录
 - **Account 实体操作前须 Detach 已跟踪实例**：长生命周期的 root-scoped DbContext 可能已跟踪同 Id 的 Account 实体（如 `AddAccountAsync` 保存后仍为 `Unchanged`）。`UpdateAccountAsync` 在调用 `Update()` 前必须查 `ChangeTracker.Entries<Account>()` 并 Detach 已跟踪实例，否则抛 "already being tracked" 异常。`DeleteAccountAsync` 同理但更复杂：sync stop 和资源清理后实体可能已过期（sync loop 的 DbContext 通过 factory 创建，可能修改了同一行，如 OAuth token 刷新），修复：`Entry(account).State = Detached` → `FirstOrDefaultAsync` 重新取 → `Remove(freshAccount)`
 - **更新账户须重启同步**：`AccountService.UpdateAccountAsync` 校验 host/port 后，若账户正在同步则自动 stop → remove pool → start，否则 SyncManager 继续用旧配置连接

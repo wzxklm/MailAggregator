@@ -229,9 +229,20 @@ public partial class AddAccountViewModel : ObservableObject
                     return; // Flow was cancelled or failed (error already set)
             }
 
+            // Build manual server config from UI fields (skips redundant auto-discovery)
+            var manualConfig = new ServerConfiguration
+            {
+                ImapHost = ImapHost,
+                ImapPort = ImapPort,
+                ImapEncryption = ImapEncryption,
+                SmtpHost = SmtpHost,
+                SmtpPort = SmtpPort,
+                SmtpEncryption = SmtpEncryption,
+            };
+
             // Create account
             var passwordForAuth = SelectedAuthType == AuthType.Password ? Password : null;
-            var account = await _accountService.AddAccountAsync(EmailAddress, passwordForAuth);
+            var account = await _accountService.AddAccountAsync(EmailAddress, passwordForAuth, manualConfig);
 
             // Store OAuth tokens on the account
             if (oauthTokens != null)

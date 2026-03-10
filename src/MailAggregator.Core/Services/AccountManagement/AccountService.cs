@@ -40,7 +40,7 @@ public class AccountService : IAccountService
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
-    public async Task<Account> AddAccountAsync(string emailAddress, string? password, CancellationToken cancellationToken = default)
+    public async Task<Account> AddAccountAsync(string emailAddress, string? password, ServerConfiguration? manualConfig = null, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(emailAddress))
             throw new ArgumentException("Email address cannot be null or empty.", nameof(emailAddress));
@@ -57,10 +57,11 @@ public class AccountService : IAccountService
                 $"An account with email '{emailAddress}' already exists.");
         }
 
-        // Step 1: Auto-discover server configuration
-        var serverConfig = await _autoDiscoveryService.DiscoverAsync(emailAddress, cancellationToken);
+        // Step 1: Use manual config if provided, otherwise auto-discover
+        var serverConfig = manualConfig
+            ?? await _autoDiscoveryService.DiscoverAsync(emailAddress, cancellationToken);
 
-        // Step 2: If discovery fails, throw
+        // Step 2: If still no config, throw
         if (serverConfig is null)
         {
             _logger.Error("Auto-discovery failed for {EmailAddress}", emailAddress);
@@ -68,7 +69,7 @@ public class AccountService : IAccountService
                 $"Could not discover server configuration for '{emailAddress}'. Please configure manually.");
         }
 
-        _logger.Information("Discovered server config for {EmailAddress}: IMAP={ImapHost}:{ImapPort}, SMTP={SmtpHost}:{SmtpPort}",
+        _logger.Information("Using server config for {EmailAddress}: IMAP={ImapHost}:{ImapPort}, SMTP={SmtpHost}:{SmtpPort}",
             emailAddress, serverConfig.ImapHost, serverConfig.ImapPort, serverConfig.SmtpHost, serverConfig.SmtpPort);
 
         // Step 3: Create new Account from the discovered config

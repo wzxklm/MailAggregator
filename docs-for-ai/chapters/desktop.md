@@ -123,6 +123,8 @@
 | 3 | Manual server config (IMAP/SMTP + SOCKS5 proxy) |
 | 4 | Complete |
 
+**Server config passthrough**: After discovery/manual entry, the ViewModel builds a `ServerConfiguration` from the UI fields and passes it as `manualConfig` to `AddAccountAsync`, skipping redundant auto-discovery on account creation.
+
 **OAuth flow** (`RunOAuthFlowAsync`):
 1. `FindProviderByHost()` → 2. `PrepareAuthorization()` → 3. Open browser → 4. `WaitForAuthorizationCodeAsync()` → 5. `ExchangeCodeForTokenAsync()` → 6. Store encrypted tokens
 

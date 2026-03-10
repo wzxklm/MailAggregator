@@ -5,14 +5,15 @@ namespace MailAggregator.Core.Services.AccountManagement;
 public interface IAccountService
 {
     /// <summary>
-    /// Adds a new email account by discovering server configuration,
+    /// Adds a new email account by discovering server configuration (or using the supplied one),
     /// determining auth type (OAuth or password), validating the connection, and saving to the database.
     /// </summary>
     /// <param name="emailAddress">The email address to add.</param>
     /// <param name="password">The plain-text password (null for OAuth accounts).</param>
+    /// <param name="manualConfig">Pre-configured server settings; when provided, auto-discovery is skipped.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>The saved Account entity.</returns>
-    Task<Account> AddAccountAsync(string emailAddress, string? password, CancellationToken cancellationToken = default);
+    Task<Account> AddAccountAsync(string emailAddress, string? password, ServerConfiguration? manualConfig = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Updates an existing account's configuration (server settings, proxy, display name, etc.).
