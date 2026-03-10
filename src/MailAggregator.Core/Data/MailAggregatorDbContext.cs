@@ -22,6 +22,7 @@ public class MailAggregatorDbContext : DbContext
     public DbSet<MailFolder> Folders => Set<MailFolder>();
     public DbSet<EmailMessage> Messages => Set<EmailMessage>();
     public DbSet<EmailAttachment> Attachments => Set<EmailAttachment>();
+    public DbSet<TwoFactorAccount> TwoFactorAccounts => Set<TwoFactorAccount>();
 
     public MailAggregatorDbContext(DbContextOptions<MailAggregatorDbContext> options)
         : base(options)
@@ -44,6 +45,19 @@ public class MailAggregatorDbContext : DbContext
     {
         var now = DateTimeOffset.UtcNow;
         foreach (var entry in ChangeTracker.Entries<Account>())
+        {
+            if (entry.State == EntityState.Added)
+            {
+                entry.Entity.CreatedAt = now;
+                entry.Entity.UpdatedAt = now;
+            }
+            else if (entry.State == EntityState.Modified)
+            {
+                entry.Entity.UpdatedAt = now;
+            }
+        }
+
+        foreach (var entry in ChangeTracker.Entries<TwoFactorAccount>())
         {
             if (entry.State == EntityState.Added)
             {
@@ -123,6 +137,15 @@ public class MailAggregatorDbContext : DbContext
             entity.HasIndex(e => e.AccountId);
             entity.HasIndex(e => e.DateSent);
             entity.HasIndex(e => new { e.FolderId, e.DateSent });
+        });
+
+        // TwoFactorAccount
+        modelBuilder.Entity<TwoFactorAccount>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Issuer).IsRequired().HasMaxLength(256);
+            entity.Property(e => e.Label).IsRequired().HasMaxLength(256);
+            entity.Property(e => e.EncryptedSecret).IsRequired();
         });
 
         // EmailAttachment

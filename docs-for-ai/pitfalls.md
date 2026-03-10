@@ -13,6 +13,8 @@
 - **同一 DbContext 内 Attach 前必须检查 ChangeTracker**：`FetchAndCacheMessagesAsync` 保存后实体仍被跟踪（`Unchanged` 状态），后续 `SyncFlagsAndDetectDeletionsAsync` 若对同 Id 实体调用 `Attach` 会抛 `InvalidOperationException`。修复模式：先查 `ChangeTracker.Entries<T>()` 构建字典，已跟踪则直接更新 tracked entity，否则 Attach 新桩对象。参见 `SetMessageReadAsync`、`FetchMessageBodyAsync`、`SyncFlagsAndDetectDeletionsAsync`
 - **避免 `Update()` 级联图遍历**：`dbContext.Folders.Update(folder)` 会级联到 `Messages` 导航属性，若其中有已跟踪实体则冲突。改用 `Attach` + 逐个 `Property(...).IsModified = true` 仅标记需要更新的标量属性
 - **批量保存**：大量消息同步时每 50 条保存一次，避免 pending changes 过多导致内存飙升
+- **新增实体必须手动建表**：`EnsureCreatedAsync()` 仅在数据库文件不存在时创建全部表。对已有数据库新增 `DbSet` 不会自动建表。必须在 `DatabaseInitializer.InitializeAsync` 中追加 `ExecuteSqlRawAsync("CREATE TABLE IF NOT EXISTS ...")` 手动建表。列类型须与 EF Core 约定一致：`DateTimeOffset` → `INTEGER`（UTC ticks，对应 `DateTimeOffsetToLongConverter`），枚举 → `INTEGER`
+- **新增带时间戳实体须扩展 StampTimestamps**：`MailAggregatorDbContext.StampTimestamps()` 按实体类型逐个处理。新增含 `CreatedAt`/`UpdatedAt` 的实体时，必须在该方法中添加对应的 `ChangeTracker.Entries<T>()` 循环，否则时间戳不会自动填充
 
 ## MailKit / 邮件协议
 

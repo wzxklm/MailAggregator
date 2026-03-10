@@ -15,6 +15,7 @@ Documentation directory: `docs-for-ai/`
   - `desktop.md` — WPF UI layer, ViewModels, views, styles, DI registrations
   - `tests.md` — test structure, file list, test patterns
   - `workflows.md` — end-to-end workflow diagrams
+  - `two-factor.md` — 2FA TOTP authenticator design & implementation guide
 
 # 3. CI/CD
 
@@ -23,7 +24,21 @@ Documentation directory: `docs-for-ai/`
 - Workflow: `.github/workflows/build.yml` — builds on `windows-latest`, runs tests, publishes `win-x64` self-contained, uploads to GitHub Releases
 - Regular `git push` to `main` does NOT trigger CI/CD
 
-# 4. AI Workflow Rules
+# 4. Current Feature Development
+
+Branch: `feature/two-factor-auth` — 2FA TOTP authenticator
+Design doc: `docs-for-ai/chapters/two-factor.md`
+
+| Phase   | Scope                                                                            | Status      |
+| ------- | -------------------------------------------------------------------------------- | ----------- |
+| Phase 1 | Core data layer — enum, entity, DbContext, DatabaseInitializer, OtpNet package   | Completed   |
+| Phase 2 | Core services — TwoFactorCodeService, TwoFactorAccountService, tests             | Not started |
+| Phase 3 | Desktop UI — DisplayItem, ViewModel, windows, MainWindow button, DI registration | Not started |
+| Phase 4 | Validation — `dotnet test` full test suite                                       | Not started |
+
+Update this table after each phase is completed.
+
+# 5. AI Workflow Rules
 
 - Before starting any task, read `docs-for-ai/index.md` and `docs-for-ai/pitfalls.md`, then read only the relevant chapter(s) based on the task
 - After completing any task, execute the following post-task workflow in order:

@@ -43,6 +43,7 @@ Supported providers: Gmail, Microsoft, Yahoo, AOL, Fastmail, any standard IMAP/S
 │       ├── mail.md                                 # Discovery + Mail + Sync + Account
 │       ├── desktop.md                              # WPF UI layer
 │       ├── tests.md                                # Test layer
+│       ├── two-factor.md                           # 2FA TOTP authenticator
 │       └── workflows.md                            # Core workflow diagrams
 │
 └── src/
@@ -60,8 +61,10 @@ Supported providers: Gmail, Microsoft, Yahoo, AOL, Fastmail, any standard IMAP/S
     │   │   ├── MailFolder.cs                       # IMAP folder (SpecialUse/UidValidity)
     │   │   ├── OAuthProviderConfig.cs              # OAuth provider config model
     │   │   ├── OAuthTokenResult.cs                 # Token response
+    │   │   ├── OtpAlgorithm.cs                    # TOTP hash algorithm (Sha1/Sha256/Sha512)
     │   │   ├── ServerConfiguration.cs              # Auto-discovered server config
-    │   │   └── SpecialFolderType.cs                # Inbox/Sent/Drafts/Trash/Junk/Archive
+    │   │   ├── SpecialFolderType.cs                # Inbox/Sent/Drafts/Trash/Junk/Archive
+    │   │   └── TwoFactorAccount.cs                # 2FA TOTP account entity
     │   ├── Data/
     │   │   ├── MailAggregatorDbContext.cs           # EF Core DbContext (SQLite)
     │   │   └── DatabaseInitializer.cs              # EnsureCreatedAsync
@@ -159,4 +162,5 @@ Supported providers: Gmail, Microsoft, Yahoo, AOL, Fastmail, any standard IMAP/S
 | Mail Services   | `chapters/mail.md`      | Connection, sync, send, discovery, account mgmt, concurrency |
 | Desktop UI      | `chapters/desktop.md`   | UI changes, ViewModels, views, styles                        |
 | Tests           | `chapters/tests.md`     | Adding/modifying tests                                       |
+| Two-Factor      | `chapters/two-factor.md`| 2FA TOTP authenticator design & implementation               |
 | Workflows       | `chapters/workflows.md` | Understanding end-to-end flows                               |
