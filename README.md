@@ -13,6 +13,7 @@ Windows desktop email client that aggregates multiple email accounts into a sing
 - **OAuth 2.0 PKCE** — secure authentication for Gmail, Microsoft, and other OAuth providers
 - **IMAP IDLE** — real-time push notifications for new emails
 - **Compose** — new messages, reply, and forward with attachment support
+- **2FA Authenticator** — built-in TOTP code generator (like Google Authenticator), secrets encrypted locally
 - **Security** — credentials encrypted with AES-256-GCM, keys protected via DPAPI
 - **Offline storage** — local SQLite database for fast access
 
@@ -26,7 +27,8 @@ Windows desktop email client that aggregates multiple email accounts into a sing
 | Mail | MailKit (IMAP/SMTP) |
 | Database | EF Core + SQLite |
 | Logging | Serilog |
-| Tests | xUnit (191 tests) |
+| TOTP | OtpNet |
+| Tests | xUnit (237 tests) |
 
 ## Getting Started
 

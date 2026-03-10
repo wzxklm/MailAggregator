@@ -1,120 +1,108 @@
-# 2FA 双因素认证管理功能（TOTP）
+# Two-Factor Auth — TOTP Authenticator
 
-## 背景
-
-在 MailAggregator 桌面邮件客户端中集成 TOTP 验证码管理器（类似 Google Authenticator）。纯本地计算，不需要联网。密钥使用现有的 AES-256-GCM 加密服务加密存储。
+Integrated TOTP authenticator (RFC 6238) in MailAggregator. Pure local computation, no network required. Secrets encrypted with existing AES-256-GCM encryption service. Uses **OtpNet 1.4.0** NuGet package. TOTP only (no HOTP).
 
 ---
 
-## 技术方案
+## Data Models — `Models/`
 
-使用 **OtpNet 1.4.0** NuGet 包实现 TOTP 验证码生成（RFC 6238）。遵循现有项目模式：Model → DbContext → Service（接口 + 实现）→ ViewModel → View。密钥通过现有 `ICredentialEncryptionService` 加密。
+### `OtpAlgorithm.cs` — HMAC algorithm enum
+- `Sha1` (default), `Sha256`, `Sha512`
 
----
-
-## 简化设计原则
-
-- **仅支持 TOTP**，不支持 HOTP（现代服务几乎都用 TOTP）
-- **按创建时间排序**，无需拖拽排序
-- **编辑时不允许修改密钥**，只能改 Issuer/Label
-- **不做剪贴板自动清除**
-
----
-
-## 新增文件
-
-### Core — 数据模型（2 个文件）
-| 文件 | 用途 |
-|------|------|
-| `Core/Models/OtpAlgorithm.cs` | 枚举：`Sha1`, `Sha256`, `Sha512` |
-| `Core/Models/TwoFactorAccount.cs` | 实体：Id, Issuer, Label, EncryptedSecret, Algorithm, Digits, Period, CreatedAt, UpdatedAt |
-
-### Core — 服务层（4 个文件）
-| 文件 | 用途 |
-|------|------|
-| `Core/Services/TwoFactor/ITwoFactorCodeService.cs` | 接口：GenerateCode, GetRemainingSeconds, ParseOtpAuthUri |
-| `Core/Services/TwoFactor/TwoFactorCodeService.cs` | 实现：封装 OtpNet；otpauth:// URI 解析 |
-| `Core/Services/TwoFactor/ITwoFactorAccountService.cs` | 接口：Add, AddFromUri, Update, Delete, GetAll |
-| `Core/Services/TwoFactor/TwoFactorAccountService.cs` | CRUD 实现；加密密钥 |
-
-### Desktop — ViewModel（3 个文件）
-| 文件 | 用途 |
-|------|------|
-| `Desktop/ViewModels/TwoFactorDisplayItem.cs` | ObservableObject：CurrentCode, RemainingSeconds, ProgressPercentage |
-| `Desktop/ViewModels/TwoFactorViewModel.cs` | 主列表 VM：DispatcherTimer（1 秒）更新验证码，复制到剪贴板 |
-| `Desktop/ViewModels/AddTwoFactorViewModel.cs` | 添加/编辑对话框 VM：手动输入 + otpauth:// URI 导入 |
-
-### Desktop — 视图（4 个文件）
-| 文件 | 用途 |
-|------|------|
-| `Desktop/Views/TwoFactorWindow.xaml` | 2FA 主窗口：账户列表 + 实时验证码 + 进度条 |
-| `Desktop/Views/TwoFactorWindow.xaml.cs` | Loaded → InitializeAsync，Closed → Dispose |
-| `Desktop/Views/AddTwoFactorWindow.xaml` | 添加/编辑对话框 |
-| `Desktop/Views/AddTwoFactorWindow.xaml.cs` | DialogResult 关闭 |
-
-### 测试（2 个文件）
-| 文件 | 用途 |
-|------|------|
-| `Tests/Services/TwoFactor/TwoFactorCodeServiceTests.cs` | TOTP RFC 测试向量，URI 解析 |
-| `Tests/Services/TwoFactor/TwoFactorAccountServiceTests.cs` | CRUD、加密往返 |
+### `TwoFactorAccount.cs` — 2FA account entity
+- `Id` (PK), `Issuer` (required, max 256), `Label` (required, max 256)
+- `EncryptedSecret` — Base32 secret stored encrypted via `ICredentialEncryptionService`
+- `Algorithm` (default: Sha1), `Digits` (default: 6), `Period` (default: 30s)
+- `CreatedAt`, `UpdatedAt` — auto-stamped by `StampTimestamps()`
+- **Independent**: No foreign key to `Account` (standalone entity)
 
 ---
 
-## 修改文件
+## Code Service — `Services/TwoFactor/TwoFactorCodeService.cs`
 
-| 文件 | 变更内容 |
-|------|----------|
-| `Core/MailAggregator.Core.csproj` | 添加 OtpNet 1.4.0 |
-| `Core/Data/MailAggregatorDbContext.cs` | 添加 DbSet、实体配置、时间戳 |
-| `Core/Data/DatabaseInitializer.cs` | `CREATE TABLE IF NOT EXISTS TwoFactorAccounts` |
-| `Desktop/App.xaml.cs` | DI 注册新服务和 VM |
-| `Desktop/MainWindow.xaml` | 工具栏添加「2FA」按钮 |
-| `Desktop/ViewModels/MainViewModel.cs` | 添加 OpenTwoFactorCommand |
+Stateless TOTP code generator. DI lifetime: **Singleton**.
 
----
+- **Record**: `OtpAuthParameters(Secret, Issuer, Label, Algorithm, Digits, Period)` — defined in `ITwoFactorCodeService.cs`
+- **Interface**: `ITwoFactorCodeService`
 
-## 关键设计决策
+**Key methods**:
+| Method | Behavior |
+|--------|----------|
+| `GenerateCode(base32Secret, algorithm, digits, period)` | Decode Base32 → create OtpNet `Totp` → compute code → `CryptographicOperations.ZeroMemory()` on secret bytes |
+| `GetRemainingSeconds(period)` | `period - (unixTimestamp % period)` |
+| `ParseOtpAuthUri(uri)` | Parse `otpauth://totp/` URI: scheme/host validation, path as `/Label` or `/Issuer:Label`, query params (secret required, issuer, algorithm, digits 6-8, period). Secret normalized to uppercase. Case-insensitive query keys |
 
-1. **密钥加密存储** — 复用 `ICredentialEncryptionService`（AES-256-GCM），Dispose 时 `ZeroMemory` 清零
-2. **数据库兼容** — `CREATE TABLE IF NOT EXISTS`（项目不使用 EF 迁移）
-3. **DispatcherTimer** — 1 秒间隔 UI 线程，周期边界时重新计算 OTP
-4. **独立于邮件** — TwoFactorAccount 与 Account 无外键关联
-
-## 实现注意事项
-
-1. **DatabaseInitializer 必须手动建表** — `EnsureCreatedAsync()` 仅在数据库不存在时创建全部表，对已有数据库新增 `DbSet` 不会自动建表。必须在 `InitializeAsync` 中追加 `ExecuteSqlRawAsync("CREATE TABLE IF NOT EXISTS TwoFactorAccounts (...)")` 手动建表
-2. **StampTimestamps 需要扩展** — `MailAggregatorDbContext.StampTimestamps()` 目前只处理 `Account` 和 `EmailMessage`，须为 `TwoFactorAccount` 添加同样的 `CreatedAt`/`UpdatedAt` 自动时间戳逻辑
-3. **服务生命周期** — `TwoFactorCodeService` → **Singleton**（无状态，纯 OTP 计算）；`TwoFactorAccountService` → **Scoped**（依赖 DbContext，同 `AccountService` 模式）
+**Private helpers**: `MapAlgorithm()` (enum → `OtpHashMode`), `ParseQuery()` (case-insensitive query string parser)
 
 ---
 
-## UI 布局
+## Account Service — `Services/TwoFactor/TwoFactorAccountService.cs`
 
-```
-+--------------------------------------------------+
-|  双因素认证管理                                     |
-+--------------------------------------------------+
-|  +--------------------------------------------+  |
-|  | Google                                      |  |
-|  | user@gmail.com                              |  |
-|  |        123 456              [复制]           |  |
-|  |        ████████░░░  剩余 12 秒               |  |
-|  +--------------------------------------------+  |
-|  | GitHub                                      |  |
-|  | myuser                                      |  |
-|  |        789 012              [复制]           |  |
-|  |        ██████░░░░  剩余 18 秒                |  |
-|  +--------------------------------------------+  |
-+--------------------------------------------------+
-|  状态文本                    [添加] [编辑] [删除]   |
-+--------------------------------------------------+
-```
+CRUD for 2FA accounts with encrypted secret storage. DI lifetime: **Scoped** (depends on DbContext).
+
+- **Dependencies**: `MailAggregatorDbContext`, `ICredentialEncryptionService`, `ITwoFactorCodeService`, `ILogger`
+- **Interface**: `ITwoFactorAccountService`
+
+**Key methods**:
+| Method | Behavior |
+|--------|----------|
+| `AddAsync(issuer, label, base32Secret, algorithm, digits, period)` | Validate inputs → normalize secret to uppercase → validate by generating test code → encrypt secret → save to DB |
+| `AddFromUriAsync(otpAuthUri)` | `ParseOtpAuthUri()` → delegate to `AddAsync()` |
+| `UpdateAsync(id, issuer, label)` | Update issuer/label only (secret is immutable) |
+| `DeleteAsync(id)` | Find and remove account |
+| `GetAllAsync()` | `AsNoTracking()`, ordered by `CreatedAt` |
+| `GetDecryptedSecret(account)` | Decrypt `EncryptedSecret` via `ICredentialEncryptionService` |
 
 ---
 
-## 实施顺序
+## Database — Data Layer Changes
 
-**阶段 1：Core 数据层** — 枚举 → 实体 → DbContext → DatabaseInitializer → OtpNet 包
-**阶段 2：Core 服务层** — TwoFactorCodeService → TwoFactorAccountService → 测试
-**阶段 3：Desktop UI** — DisplayItem → ViewModel → 窗口 → MainWindow 按钮 → DI 注册
-**阶段 4：验证** — `dotnet test` 全量测试
+### `MailAggregatorDbContext.cs`
+- **DbSet**: `TwoFactorAccounts` (expression-bodied `Set<TwoFactorAccount>()`)
+- **Entity config** (`OnModelCreating`): PK `Id`, required `Issuer` (max 256), required `Label` (max 256), required `EncryptedSecret`
+- **Auto timestamps**: `StampTimestamps()` handles `TwoFactorAccount` — sets `CreatedAt`/`UpdatedAt` on insert, `UpdatedAt` on modify
+- **Value conversion**: `DateTimeOffset` stored as UTC ticks (long) via `DateTimeOffsetToLongConverter`
+
+### `DatabaseInitializer.cs`
+- `EnsureCreatedAsync()` only creates tables for new databases; for existing databases, explicit `CREATE TABLE IF NOT EXISTS TwoFactorAccounts` is required
+- Schema: `Id` (INTEGER PK AUTOINCREMENT), `Issuer`/`Label`/`EncryptedSecret` (TEXT NOT NULL), `Algorithm` (INTEGER DEFAULT 0), `Digits` (INTEGER DEFAULT 6), `Period` (INTEGER DEFAULT 30), `CreatedAt`/`UpdatedAt` (INTEGER DEFAULT 0)
+
+---
+
+## Desktop UI
+
+UI layer is documented in `desktop.md` under dedicated sections:
+- **TwoFactorWindow** — non-modal window, ListBox with real-time codes, DispatcherTimer (1s)
+- **TwoFactorViewModel** — scope-based `ITwoFactorAccountService` resolution, timer lifecycle
+- **AddTwoFactorWindow** — modal dialog, manual input / URI import / edit modes
+- **AddTwoFactorViewModel** — `CloseRequested` event pattern, validation
+- **TwoFactorDisplayItem** — `UpdateCode()` at period boundary, code formatting ("123 456" / "1234 5678")
+
+**DI registrations** (in `App.xaml.cs`):
+| Service | Lifetime |
+|---------|----------|
+| `ITwoFactorCodeService` | Singleton |
+| `ITwoFactorAccountService` | Scoped |
+| `TwoFactorViewModel` | Transient |
+| `AddTwoFactorViewModel` | Transient |
+
+**MainWindow integration**: Toolbar "2FA" button → `OpenTwoFactorCommand` in `MainViewModel`
+
+---
+
+## Tests
+
+| Test File | Count | Coverage |
+|-----------|-------|----------|
+| `Services/TwoFactor/TwoFactorCodeServiceTests.cs` | 23 | 6/8-digit output, SHA1/256/512, null/empty validation, case-insensitive secrets, memory zeroization, URI parsing (full/minimal/encoded/error cases), secret normalization |
+| `Services/TwoFactor/TwoFactorAccountServiceTests.cs` | 17 | CRUD operations, encryption round-trip, input validation, URI integration, ordered retrieval, `GetDecryptedSecret` |
+
+**Test patterns**: In-memory SQLite, `DevKeyProtector` for test encryption, Moq for `ILogger`, FluentAssertions
+
+---
+
+## Security
+
+- **Encryption at rest**: Secrets encrypted via `ICredentialEncryptionService` (AES-256-GCM) before DB storage
+- **Memory safety**: `CryptographicOperations.ZeroMemory()` on decoded secret bytes after code generation
+- **Secret immutability**: Edit mode only allows changing Issuer/Label, never the secret

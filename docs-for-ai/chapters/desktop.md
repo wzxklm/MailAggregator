@@ -158,7 +158,7 @@
 
 **Layout**: `DockPanel` with ListBox (account list) and bottom button bar (Add/Edit/Delete + status text).
 
-**ListBox item template**: Each item shows Issuer, Label, CurrentCode (Consolas 28pt), ProgressBar with remaining seconds. Copy button per item bound to `CopyCodeCommand` via `RelativeSource AncestorType=ListBox`.
+**ListBox item template**: Each item shows Issuer, Label, CurrentCode (Consolas 28pt), ProgressBar with remaining seconds. Copy button per item bound to `CopyCodeCommand` via `RelativeSource AncestorType=ListBox`, with `CommandParameter="{Binding}"` passing the item's `TwoFactorDisplayItem` directly.
 
 **Empty state**: DataTrigger on `Items.Count == 0` replaces ListBox template with placeholder text.
 
@@ -173,7 +173,7 @@
 | Command | Action |
 |---------|--------|
 | `LoadAccountsCommand` | Create scope → `ITwoFactorAccountService.GetAllAsync()` → decrypt secrets → build `TwoFactorDisplayItem` collection |
-| `CopyCodeCommand` | Copy `SelectedItem.CurrentCode` (stripped spaces) to clipboard |
+| `CopyCodeCommand` | Takes `TwoFactorDisplayItem?` parameter (via `CommandParameter`), falls back to `SelectedItem`. Copies `CurrentCode` (stripped spaces) to clipboard |
 | `AddAccountCommand` | Open `AddTwoFactorWindow` (modal) → reload on success |
 | `EditAccountCommand` | Open `AddTwoFactorWindow` with `LoadForEdit()` → reload on success |
 | `DeleteAccountCommand` | Confirmation dialog → `ITwoFactorAccountService.DeleteAsync()` → remove from list |

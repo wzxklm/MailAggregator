@@ -77,12 +77,13 @@ public partial class TwoFactorViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand]
-    private void CopyCode()
+    private void CopyCode(TwoFactorDisplayItem? item)
     {
-        if (SelectedItem == null) return;
+        item ??= SelectedItem;
+        if (item == null) return;
         try
         {
-            var code = SelectedItem.CurrentCode.Replace(" ", "");
+            var code = item.CurrentCode.Replace(" ", "");
             System.Windows.Clipboard.SetText(code);
             StatusText = "Code copied";
         }

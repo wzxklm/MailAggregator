@@ -45,6 +45,7 @@
                         <Button Grid.Row="0" Grid.RowSpan="2" Grid.Column="1"
                                 Content="Copy" Style="{StaticResource ToolbarButton}"
                                 Command="{Binding DataContext.CopyCodeCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                CommandParameter="{Binding}"
                                 VerticalAlignment="Center" Margin="8,0,0,0" />
 
                         <!-- Label -->
