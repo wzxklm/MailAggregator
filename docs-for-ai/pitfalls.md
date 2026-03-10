@@ -62,6 +62,12 @@
 - **网络感知重连**：`SyncManager` 订阅 `NetworkChange.NetworkAvailabilityChanged`，网络断开时暂停退避循环（`ManualResetEventSlim`），恢复时立即重连（重置 `reconnectAttempt=0`）。不要用冗余的 volatile bool，直接用 `_networkAvailable.IsSet`
 - **AutoDiscovery 并行请求须取消剩余**：Level 1-3 并行发起后，首个成功结果通过 `CancellationTokenSource.CancelAsync()` 取消其他正在进行的 HTTP 请求，避免浪费资源
 
+## 2FA / TOTP
+
+- **PK 查找用 `FindAsync` 而非 `FirstOrDefaultAsync`**：`FindAsync` 先查 ChangeTracker 后查数据库，适合单主键查找且避免与已跟踪实体冲突。`TwoFactorAccountService.UpdateAsync`/`DeleteAsync` 均使用此模式
+- **Secret 存储前须 `ToUpperInvariant()` 标准化**：Base32 不区分大小写，但用户输入可能混合大小写。在验证和加密前统一转换为大写，确保解密后 TOTP 生成一致。`ParseOtpAuthUri` 同样对 secret 参数做大写标准化
+- **TOTP 密钥字节须零化清理**：`Base32Encoding.ToBytes` 解码后的密钥字节数组用完后必须调用 `CryptographicOperations.ZeroMemory` 清理，防止内存中残留敏感数据。使用 `try/finally` 确保异常路径也能清理
+
 ## 架构约定
 
 - **共享连接逻辑放 `MailConnectionHelper`**：认证、代理配置、加密类型映射等逻辑集中在此 internal static 类，不要在 ImapConnectionService / SmtpConnectionService 中重复实现。非瞬态认证错误检测（`IsNonTransientAuthError`）也集中在此类，`SyncManager` 和 `EmailSyncService` 统一调用，不要在各处内联关键字匹配

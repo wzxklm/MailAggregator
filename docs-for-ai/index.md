@@ -12,7 +12,7 @@ MailAggregator — Windows desktop email aggregation client, direct IMAP/SMTP, n
 | Architecture | MVVM (CommunityToolkit.Mvvm) + DI                       |
 | Platform     | Windows x64 (Core cross-platform, Desktop Windows-only) |
 | Version      | v1.0.8                                                  |
-| Tests        | 193 xUnit tests                                         |
+| Tests        | 237 xUnit tests                                         |
 
 Supported providers: Gmail, Microsoft, Yahoo, AOL, Fastmail, any standard IMAP/SMTP server.
 
@@ -86,6 +86,9 @@ Supported providers: Gmail, Microsoft, Yahoo, AOL, Fastmail, any standard IMAP/S
     │       │   └── IEmailSendService.cs / EmailSendService.cs                         # Send/reply/forward
     │       ├── AccountManagement/
     │       │   └── IAccountService.cs / AccountService.cs                             # Account CRUD
+    │       ├── TwoFactor/
+    │       │   ├── ITwoFactorCodeService.cs / TwoFactorCodeService.cs                 # TOTP code generation
+    │       │   └── ITwoFactorAccountService.cs / TwoFactorAccountService.cs           # 2FA account CRUD
     │       └── Sync/
     │           └── ISyncManager.cs / SyncManager.cs                                   # IMAP IDLE background sync
     │
@@ -110,7 +113,7 @@ Supported providers: Gmail, Microsoft, Yahoo, AOL, Fastmail, any standard IMAP/S
     │       ├── NullToVisibilityConverter.cs         # Null → Collapsed
     │       └── FileSizeConverter.cs                 # Bytes → "1.5 MB"
     │
-    └── MailAggregator.Tests/                       # ═══ Tests (net8.0, 193 tests) ═══
+    └── MailAggregator.Tests/                       # ═══ Tests (net8.0, 237 tests) ═══
         ├── MailAggregator.Tests.csproj
         ├── Data/MailAggregatorDbContextTests.cs                        # [6]
         └── Services/
@@ -118,6 +121,8 @@ Supported providers: Gmail, Microsoft, Yahoo, AOL, Fastmail, any standard IMAP/S
             ├── Discovery/AutoDiscoveryServiceTests.cs                   # [35]
             ├── Mail/{EmailSync,ImapConnection,EmailSend}ServiceTests.cs # [9+4+29]
             ├── AccountManagement/AccountServiceTests.cs                 # [22]
+            ├── TwoFactor/TwoFactorCodeServiceTests.cs                   # [20]
+            ├── TwoFactor/TwoFactorAccountServiceTests.cs                # [24]
             └── Sync/SyncManagerTests.cs                                 # [30]
 ```
 
