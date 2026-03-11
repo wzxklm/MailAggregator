@@ -4,7 +4,8 @@ Windows desktop email client that aggregates multiple email accounts into a sing
 
 ## Demo
 
-![Demo](demo.png)
+![Demo1](demo1.png)
+![Demo2](demo2.png)
 
 ## Features
 
@@ -19,16 +20,16 @@ Windows desktop email client that aggregates multiple email accounts into a sing
 
 ## Tech Stack
 
-| Component | Technology |
-|-----------|------------|
-| Framework | .NET 8 |
-| UI | WPF + WebView2 |
+| Component    | Technology                        |
+| ------------ | --------------------------------- |
+| Framework    | .NET 8                            |
+| UI           | WPF + WebView2                    |
 | Architecture | MVVM (CommunityToolkit.Mvvm) + DI |
-| Mail | MailKit (IMAP/SMTP) |
-| Database | EF Core + SQLite |
-| Logging | Serilog |
-| TOTP | OtpNet |
-| Tests | xUnit (237 tests) |
+| Mail         | MailKit (IMAP/SMTP)               |
+| Database     | EF Core + SQLite                  |
+| Logging      | Serilog                           |
+| TOTP         | OtpNet                            |
+| Tests        | xUnit (237 tests)                 |
 
 ## Getting Started
 
