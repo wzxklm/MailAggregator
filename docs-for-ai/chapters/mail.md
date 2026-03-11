@@ -79,7 +79,7 @@ Last 30 days, summaries only (no body), batch save every 50
 
 ### Message operations
 - `SetMessageReadAsync` / `DownloadAttachmentAsync` / `MoveMessageAsync` / `DeleteMessageAsync` (→ Trash)
-- `FetchMessageBodyAsync` — lazy-fetch body + attachments
+- `FetchMessageBodyAsync` — lazy-fetch body + attachments; retries once on `IOException` (dead pooled connection)
 - `ResolveInlineImages` (private) — replaces `cid:` refs with `data:` URIs from MIME `BodyParts`
 
 ### Concurrency

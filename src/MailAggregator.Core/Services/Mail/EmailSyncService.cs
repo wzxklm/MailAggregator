@@ -473,12 +473,33 @@ public class EmailSyncService : IEmailSyncService
         var folder = await dbContext.Folders.FindAsync(new object[] { message.FolderId }, cancellationToken)
             ?? throw new InvalidOperationException($"Folder {message.FolderId} not found.");
 
-        using var pooled = await _connectionPool.GetConnectionAsync(account, cancellationToken);
-        var imapFolder = await pooled.Client.GetFolderAsync(folder.FullName, cancellationToken);
-        await imapFolder.OpenAsync(FolderAccess.ReadOnly, cancellationToken);
+        // Retry once on IOException: pooled connections may appear alive (IsConnected=true)
+        // but have a dead TCP socket (e.g. silently dropped by firewall/NAT). The first
+        // failure disposes the bad connection; the retry gets a fresh one.
+        MimeMessage mimeMessage;
+        IMailFolder imapFolder;
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            using var pooled = await _connectionPool.GetConnectionAsync(account, cancellationToken);
+            try
+            {
+                imapFolder = await pooled.Client.GetFolderAsync(folder.FullName, cancellationToken);
+                await imapFolder.OpenAsync(FolderAccess.ReadOnly, cancellationToken);
 
-        var uid = new UniqueId(message.Uid);
-        var mimeMessage = await imapFolder.GetMessageAsync(uid, cancellationToken);
+                var uid = new UniqueId(message.Uid);
+                mimeMessage = await imapFolder.GetMessageAsync(uid, cancellationToken);
+                goto fetched;
+            }
+            catch (IOException) when (attempt == 0)
+            {
+                // Dead pooled connection — let it be disposed, then retry with a fresh one
+            }
+        }
+
+        // Unreachable: the second attempt either returns or throws
+        throw new InvalidOperationException("Unreachable");
+
+        fetched:
 
         message.BodyText = mimeMessage.TextBody;
         message.BodyHtml = mimeMessage.HtmlBody;
@@ -528,7 +549,6 @@ public class EmailSyncService : IEmailSyncService
         }
 
         await dbContext.SaveChangesAsync(cancellationToken);
-        await imapFolder.CloseAsync(false, cancellationToken);
 
         _logger.Debug("Fetched body for UID {Uid} in {Folder} for {Email}",
             message.Uid, folder.FullName, account.EmailAddress);
