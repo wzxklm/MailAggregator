@@ -45,7 +45,7 @@ Same pattern as IMAP. **Interface**: `ISmtpConnectionService` — `ConnectAsync(
 
 - `ConcurrentDictionary<int, ConcurrentQueue<ImapClient>>` per-account. Max 2 per account
 - **Atomic size tracking**: `_poolCounts` via `AddOrUpdate`
-- **Validation**: `IsConnected && IsAuthenticated` before reuse; stale auto-released
+- **Validation**: `IsConnected && IsAuthenticated` before reuse; stale auto-released. OAuth accounts also check `OAuthTokenExpiry` — expired tokens discard the connection so `ConnectAsync` creates a fresh one with token refresh
 - **Cleanup timer**: 5min `Timer`, dequeue/re-enqueue live, dispose dead. Guards `_disposed`
 - `GetConnectionAsync` / `ReturnToPool` / `RemoveAccount`
 - **Interface**: `IImapConnectionPool`

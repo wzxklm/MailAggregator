@@ -44,6 +44,18 @@ public class ImapConnectionPool : IImapConnectionPool
 
             if (client.IsConnected && client.IsAuthenticated)
             {
+                // Discard pooled connections whose OAuth token has expired — the server
+                // will reject commands with "Session invalidated - AccessTokenExpired".
+                // Creating a fresh connection triggers token refresh in ConnectAsync.
+                if (account.AuthType == AuthType.OAuth2
+                    && account.OAuthTokenExpiry.HasValue
+                    && account.OAuthTokenExpiry.Value <= DateTimeOffset.UtcNow)
+                {
+                    _logger.Debug("Discarding pooled connection with expired OAuth token for {Email}", account.EmailAddress);
+                    DisposeClient(client);
+                    continue;
+                }
+
                 _logger.Debug("Reusing pooled IMAP connection for {Email}", account.EmailAddress);
                 return new PooledImapConnection(client, c => ReturnToPool(account.Id, c));
             }
