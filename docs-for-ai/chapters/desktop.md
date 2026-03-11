@@ -11,7 +11,9 @@
 
 ## App Entry — `App.xaml.cs`
 
-**Startup** (`OnStartup`): Create `%AppData%\MailAggregator\` → Serilog (7-day rolling) → DI → DB init → notifications → MainWindow
+**Startup** (`OnStartup`): Create `%AppData%\MailAggregator\` → Serilog (7-day rolling, controlled by `LogLevelSwitch`) → DI → DB init → notifications → MainWindow
+
+**`LogLevelSwitch`**: Static `LoggingLevelSwitch` (default `Information`). Serilog `.MinimumLevel.ControlledBy(LogLevelSwitch)` enables runtime log level changes. Toggled by `MainViewModel.CycleLogLevelCommand`
 
 **DI registrations**:
 - **Singleton**: DbContextFactory, Logger, KeyProtector, CredentialEncryption, PasswordAuth, OAuth, HttpClient, AutoDiscovery, ImapConnection, SmtpConnection, ImapConnectionPool, TwoFactorCodeService, SyncManager
@@ -51,7 +53,7 @@ All windows use `ui:WindowHelper.UseModernWindowStyle="True"` for Fluent window 
 │  Unified Inbox | New | Reply | Forward           │
 │  | Delete | Sync | Accounts | 2FA               │
 ├──────────────────────────────────────────────────┤
-│  StatusBar: StatusText + sync progress           │
+│  StatusBar: StatusText + sync progress + log level│
 ├───────────────┬──────────────────────────────────┤
 │  Folder Tree  │  Email List (≤200, date desc)    │
 │               ├──────────────────────────────────┤
@@ -72,16 +74,17 @@ Toolbar replaced from `ToolBarTray` to custom `Border` command bar with `Segoe M
 
 ## MainViewModel
 
-**Properties**: `FolderTree` (ObservableCollection<AccountFolderNode>), `Emails` (≤200), `SelectedEmail`, `SelectedFolder`, `StatusText`, `IsSyncing`, `Accounts`
+**Properties**: `FolderTree` (ObservableCollection<AccountFolderNode>), `Emails` (≤200), `SelectedEmail`, `SelectedFolder`, `StatusText`, `IsSyncing`, `LogLevel` ("INFO"/"DEBUG"), `Accounts`
 
 **Commands**:
 | Command | Action |
 |---------|--------|
 | `LoadAccountsCommand` | Load all → sync folders → build tree → start sync → show unified inbox (per-account try/catch) |
 | `SelectFolderCommand` | Incremental sync → load ≤200 emails (no body) |
-| `ShowUnifiedInboxCommand` | Sync all Inboxes → merge |
+| `ShowUnifiedInboxCommand` | Sync all Inboxes → merge (per-account try/catch: one account failure is logged + skipped, others continue) |
 | `MarkAsReadCommand` / `DeleteMessageCommand` | Read / Move to Trash |
 | `ComposeNewCommand` / `Reply/ReplyAll/ForwardCommand` | Open compose |
+| `CycleLogLevelCommand` | Toggle Serilog between INFO ↔ DEBUG via `App.LogLevelSwitch` |
 | `OpenAccountSettingsCommand` | Account management |
 
 **Email selection**: `SelectedEmail` → `LoadFullMessageAndMarkReadAsync()`: DB body (if cached) → if not cached or has unresolved `cid:` → IMAP fetch → fill body + attachments → mark read
@@ -114,7 +117,9 @@ Non-modal, 4 modes: New/Reply/ReplyAll/Forward. Sender dropdown, attachments. `S
 
 ## AccountListWindow + AccountListViewModel
 
-Modal. Account list (email, host, auth). Add/edit/delete with confirmation.
+Modal. Account list (email, host, auth, IDLE/Polling indicator). Add/edit/delete with confirmation.
+
+**Commands**: `AddAccountCommand`, `EditAccountCommand`, `DeleteAccountCommand`, `ToggleIdleCommand` (toggles `Account.UseIdle` → `UpdateAccountAsync` → restarts sync; reverts in-memory state on failure — no LoadAccountsAsync reload needed since the list binding stays live)
 
 ---
 

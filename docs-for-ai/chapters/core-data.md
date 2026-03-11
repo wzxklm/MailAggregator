@@ -16,7 +16,7 @@
 - **Connection**: `ImapHost/Port/Encryption`, `SmtpHost/Port/Encryption`
 - **Auth**: `AuthType`, `EncryptedPassword`, `EncryptedAccessToken`, `EncryptedRefreshToken`, `OAuthTokenExpiry`
 - **Proxy**: `ProxyHost`, `ProxyPort` (SOCKS5)
-- **Meta**: `IsEnabled`, `CreatedAt`, `UpdatedAt`
+- **Meta**: `IsEnabled`, `UseIdle` (default true — false forces polling), `CreatedAt`, `UpdatedAt`
 - **Nav**: `Folders` (1:N), `Messages` (1:N)
 
 ### `MailFolder.cs`
@@ -67,5 +67,6 @@ IMAP/SMTP `Host`, `Port`, `Encryption`
 - **TwoFactorAccount config**: PK `Id`, required `Issuer`/`Label` (max 256), required `EncryptedSecret`
 
 ### `DatabaseInitializer.cs`
-- `InitializeAsync()`: `EnsureCreatedAsync()` + explicit `CREATE TABLE IF NOT EXISTS TwoFactorAccounts` for existing DBs
+- `InitializeAsync()`: `EnsureCreatedAsync()` + explicit `CREATE TABLE IF NOT EXISTS TwoFactorAccounts` for existing DBs + `ALTER TABLE Accounts ADD COLUMN UseIdle` for existing DBs
 - Schema: `Id` INTEGER PK AUTOINCREMENT, `Issuer`/`Label`/`EncryptedSecret` TEXT NOT NULL, `Algorithm` INTEGER DEFAULT 0, `Digits` INTEGER DEFAULT 6, `Period` INTEGER DEFAULT 30, `CreatedAt`/`UpdatedAt` INTEGER DEFAULT 0
+- **Migration catch narrowed**: `ALTER TABLE ... ADD COLUMN` catches only `SqliteException` where `SqliteErrorCode == 1` (SQLITE_ERROR = duplicate column). Do not use a broad `catch` — other SQLite errors (I/O, corruption) should propagate

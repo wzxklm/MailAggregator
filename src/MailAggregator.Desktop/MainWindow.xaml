@@ -89,9 +89,19 @@
                 Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}"
                 BorderBrush="{StaticResource SeparatorBrush}" BorderThickness="0,1,0,0">
             <DockPanel>
-                <ProgressBar DockPanel.Dock="Right" Width="120" Height="3"
-                             IsIndeterminate="True" Margin="12,0,0,0"
-                             Visibility="{Binding IsSyncing, Converter={StaticResource BoolToVisibility}}" />
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <ProgressBar Width="120" Height="3"
+                                 IsIndeterminate="True" Margin="0,0,8,0"
+                                 Visibility="{Binding IsSyncing, Converter={StaticResource BoolToVisibility}}" />
+                    <Button Style="{StaticResource ToolbarButton}" Command="{Binding CycleLogLevelCommand}"
+                            ToolTip="Click to cycle log level" Padding="6,2" FontSize="11">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xEA37;" FontFamily="Segoe MDL2 Assets" FontSize="11"
+                                       VerticalAlignment="Center" Margin="0,0,4,0" />
+                            <TextBlock Text="{Binding LogLevel}" VerticalAlignment="Center" FontSize="11" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
                 <TextBlock Text="{Binding StatusText}" Style="{StaticResource StatusBarText}" />
             </DockPanel>
         </Border>

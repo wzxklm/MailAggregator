@@ -41,6 +41,11 @@ public class SyncManager : ISyncManager, IDisposable
     /// </summary>
     internal const double JitterFactor = 0.25;
 
+    /// <summary>
+    /// Number of consecutive IDLE rejections before permanently switching to polling for the session.
+    /// </summary>
+    internal const int MaxIdleFailuresBeforePolling = 2;
+
     private readonly IImapConnectionService _imapConnectionService;
     private readonly IEmailSyncService _emailSyncService;
     private readonly ILogger _logger;
@@ -238,9 +243,14 @@ public class SyncManager : ISyncManager, IDisposable
                 await imapInbox.OpenAsync(FolderAccess.ReadOnly, cancellationToken);
 
                 var previousCount = imapInbox.Count;
-                var supportsIdle = client.Capabilities.HasFlag(ImapCapabilities.Idle);
+                var supportsIdle = account.UseIdle && client.Capabilities.HasFlag(ImapCapabilities.Idle);
 
-                if (!supportsIdle)
+                if (!account.UseIdle)
+                {
+                    _logger.Information("IDLE disabled by user for account {AccountId} ({Email}), using polling (interval={Interval}s)",
+                        account.Id, account.EmailAddress, PollingInterval.TotalSeconds);
+                }
+                else if (!supportsIdle)
                 {
                     _logger.Information("Server does not support IDLE for account {AccountId} ({Email}), using polling (interval={Interval}s)",
                         account.Id, account.EmailAddress, PollingInterval.TotalSeconds);
@@ -248,13 +258,24 @@ public class SyncManager : ISyncManager, IDisposable
 
                 // Connection setup succeeded; reset backoff
                 reconnectAttempt = 0;
+                var idleFailures = 0;
 
                 // Step 5: Watch loop (IDLE or polling fallback)
                 while (!cancellationToken.IsCancellationRequested)
                 {
                     if (supportsIdle)
                     {
-                        await IdleWaitAsync(client, account, cancellationToken);
+                        var idleOk = await IdleWaitAsync(client, account, cancellationToken);
+                        if (!idleOk)
+                        {
+                            idleFailures++;
+                            if (idleFailures >= MaxIdleFailuresBeforePolling)
+                            {
+                                supportsIdle = false;
+                                _logger.Information("IDLE rejected {Count} times for account {AccountId} ({Email}), permanently switching to polling (interval={Interval}s)",
+                                    idleFailures, account.Id, account.EmailAddress, PollingInterval.TotalSeconds);
+                            }
+                        }
                     }
                     else
                     {
@@ -265,9 +286,9 @@ public class SyncManager : ISyncManager, IDisposable
                     if (cancellationToken.IsCancellationRequested)
                         break;
 
-                    // Step 6: Check for new messages (NOOP refreshes state for non-IDLE servers)
-                    if (!supportsIdle)
-                        await client.NoOpAsync(cancellationToken);
+                    // Step 6: NOOP refreshes folder state — needed for polling servers and also
+                    // for IDLE servers that don't reliably push EXISTS notifications (e.g. QQ Mail)
+                    await client.NoOpAsync(cancellationToken);
 
                     var currentCount = imapInbox.Count;
                     if (currentCount > previousCount)
@@ -376,10 +397,10 @@ public class SyncManager : ISyncManager, IDisposable
     }
 
     /// <summary>
-    /// Executes a single IDLE wait cycle. If the server rejects IDLE (BAD/NO response),
-    /// falls back to a polling delay instead of entering an infinite retry loop.
+    /// Executes a single IDLE wait cycle. Returns false if the server rejected the
+    /// IDLE command (BAD/NO response), true otherwise.
     /// </summary>
-    private async Task IdleWaitAsync(ImapClient client, LocalAccount account, CancellationToken cancellationToken)
+    private async Task<bool> IdleWaitAsync(ImapClient client, LocalAccount account, CancellationToken cancellationToken)
     {
         _logger.Debug("Entering IMAP IDLE for account {AccountId} ({Email})",
             account.Id, account.EmailAddress);
@@ -390,17 +411,19 @@ public class SyncManager : ISyncManager, IDisposable
         try
         {
             await client.IdleAsync(idleDone.Token, cancellationToken);
+            return true;
         }
         catch (ImapCommandException ex)
         {
-            // Server rejected IDLE command (BAD/NO) — degrade to polling for this cycle
-            _logger.Warning(ex, "IDLE rejected by server for account {AccountId} ({Email}), falling back to poll delay",
+            _logger.Warning(ex, "IDLE rejected by server for account {AccountId} ({Email})",
                 account.Id, account.EmailAddress);
             await Task.Delay(PollingInterval, cancellationToken);
+            return false;
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             // IDLE timeout expired or server sent notification — this is normal
+            return true;
         }
     }
 

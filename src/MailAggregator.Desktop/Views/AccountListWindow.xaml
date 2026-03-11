@@ -17,6 +17,9 @@
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                     <Button Content="Add Account" Style="{StaticResource PrimaryButton}"
                             Command="{Binding AddAccountCommand}" Margin="0,0,8,0" />
+                    <Button Content="Toggle IDLE" Style="{StaticResource ToolbarButton}"
+                            Command="{Binding ToggleIdleCommand}" Margin="0,0,8,0"
+                            ToolTip="Toggle between IDLE (push) and Polling mode" />
                     <Button Content="Edit" Style="{StaticResource ToolbarButton}"
                             Command="{Binding EditAccountCommand}" Margin="0,0,8,0" />
                     <Button Content="Delete" Style="{StaticResource DangerButton}"
@@ -42,6 +45,19 @@
                                     <TextBlock Text="{Binding ImapHost}" Foreground="{StaticResource SubtleBrush}" FontSize="12" />
                                     <TextBlock Text="  ·  " Foreground="{StaticResource SubtleBrush}" FontSize="12" />
                                     <TextBlock Text="{Binding AuthType}" Foreground="{StaticResource SubtleBrush}" FontSize="12" />
+                                    <TextBlock Text="  ·  " Foreground="{StaticResource SubtleBrush}" FontSize="12" />
+                                    <TextBlock Foreground="{StaticResource SubtleBrush}" FontSize="12">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Text" Value="IDLE" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding UseIdle}" Value="False">
+                                                        <Setter Property="Text" Value="Polling" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
                                 </StackPanel>
                             </StackPanel>
                         </DockPanel>

@@ -12,6 +12,8 @@ using MailAggregator.Desktop.ViewModels;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Serilog;
+using Serilog.Core;
+using Serilog.Events;
 
 namespace MailAggregator.Desktop;
 
@@ -19,6 +21,7 @@ public partial class App : System.Windows.Application
 {
     private ServiceProvider? _serviceProvider;
 
+    public static LoggingLevelSwitch LogLevelSwitch { get; } = new(LogEventLevel.Information);
     public static IServiceProvider Services { get; private set; } = null!;
 
     protected override async void OnStartup(StartupEventArgs e)
@@ -32,7 +35,7 @@ public partial class App : System.Windows.Application
 
         // Configure Serilog
         Log.Logger = new LoggerConfiguration()
-            .MinimumLevel.Information()
+            .MinimumLevel.ControlledBy(LogLevelSwitch)
             .WriteTo.File(
                 Path.Combine(appDataPath, "logs", "log-.txt"),
                 rollingInterval: RollingInterval.Day,

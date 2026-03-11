@@ -26,6 +26,18 @@ public static class DatabaseInitializer
             )
             """);
 
+        // Add UseIdle column to existing Accounts table (defaults to 1 = true).
+        // SQLite ALTER TABLE ADD COLUMN throws if column already exists, so catch and ignore.
+        try
+        {
+            await context.Database.ExecuteSqlRawAsync(
+                "ALTER TABLE Accounts ADD COLUMN UseIdle INTEGER NOT NULL DEFAULT 1");
+        }
+        catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.SqliteErrorCode == 1)
+        {
+            // Column already exists — ignore (SQLite error code 1 = SQLITE_ERROR for duplicate column)
+        }
+
         Log.Information("Database initialized successfully");
     }
 }

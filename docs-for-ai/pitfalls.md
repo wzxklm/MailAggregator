@@ -14,6 +14,7 @@
 - **Avoid `Update()` cascade**: `Update(folder)` cascades to `Messages` nav property causing conflicts. Use `Attach` + `Property(...).IsModified = true`
 - **Batch saves**: Save every 50 items during bulk sync
 - **New entities need manual table creation**: `EnsureCreatedAsync()` only works for new DBs. Add `ExecuteSqlRawAsync("CREATE TABLE IF NOT EXISTS ...")` in `DatabaseInitializer.InitializeAsync`. Types: `DateTimeOffset` → `INTEGER` (UTC ticks), enums → `INTEGER`
+- **Schema migration catch must be narrowed**: `ALTER TABLE ... ADD COLUMN` throws `SqliteException` if the column exists. Catch only when `ex.SqliteErrorCode == 1` (SQLITE_ERROR). A broad `catch (SqliteException)` would silently swallow I/O and corruption errors
 - **New timestamped entities**: Add `ChangeTracker.Entries<T>()` loop in `StampTimestamps()` for `CreatedAt`/`UpdatedAt` auto-population
 
 ## MailKit / Mail Protocol
@@ -62,7 +63,8 @@
 - **Account deletion cleanup order**: `StopAccountSyncAsync` → `RemoveAccount` (pool) → `RemoveTokenRefreshLock` → delete attachments → delete DB
 - **Detach tracked Account before Update/Delete**: Root DbContext may track stale entity. Update: detach via `ChangeTracker.Entries<Account>()`. Delete: `Detached` → re-fetch → `Remove(freshAccount)`
 - **Account update restarts sync**: Validates host/port, then stop → remove pool → restart if syncing
-- **IDLE fallback**: Check `ImapCapabilities.Idle`. No IDLE → 59s polling + `NoOpAsync`. IDLE rejection (`ImapCommandException`) → poll that cycle
+- **Per-account IDLE toggle**: `Account.UseIdle` (default true). SyncManager checks `account.UseIdle && ImapCapabilities.Idle` — when false, always polls. Toggled via AccountListViewModel `ToggleIdleCommand` → `UpdateAccountAsync` (restarts sync)
+- **IDLE fallback with permanent degradation**: Check `ImapCapabilities.Idle`. No IDLE → 59s polling. IDLE rejection (`ImapCommandException`) → poll delay + increment failure counter; 2 consecutive failures → permanently switch to polling for that connection session. `NoOpAsync` always sent after both IDLE and poll cycles (some servers like QQ Mail don't reliably push EXISTS notifications)
 - **Merged flag sync + deletion**: `SyncFlagsAndDetectDeletionsAsync` — single FETCH (missing UIDs = deleted)
 - **Pool cleanup timer**: 5min `Timer` removes zombie connections (NAT/mobile silent TCP drops)
 - **Pool size atomic tracking**: `_poolCounts` `AddOrUpdate` prevents exceeding limit

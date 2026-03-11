@@ -9,6 +9,7 @@ using MailAggregator.Core.Services.Sync;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Serilog;
+using Serilog.Events;
 
 namespace MailAggregator.Desktop.ViewModels;
 
@@ -41,6 +42,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     private bool _isSyncing;
+
+    [ObservableProperty]
+    private string _logLevel = "INFO";
 
     [ObservableProperty]
     private ObservableCollection<Account> _accounts = [];
@@ -259,13 +263,22 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 .ToList();
 
             // Sync sequentially per account, parallel across accounts
+            // Per-account error handling: one account failure should not block others
             var syncTasks = inboxFolders
                 .GroupBy(f => f.Account!.Id)
                 .Select(async group =>
                 {
-                    foreach (var f in group)
+                    var account = group.First().Account!;
+                    try
                     {
-                        await _emailSyncService.SyncIncrementalAsync(f.Account!, f.Folder!);
+                        foreach (var f in group)
+                        {
+                            await _emailSyncService.SyncIncrementalAsync(f.Account!, f.Folder!);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Warning(ex, "Failed to sync inbox for {Email}, skipping", account.EmailAddress);
                     }
                 });
             await Task.WhenAll(syncTasks);
@@ -435,6 +448,15 @@ public partial class MainViewModel : ObservableObject, IDisposable
         var vm = App.Services.GetRequiredService<TwoFactorViewModel>();
         var window = new Views.TwoFactorWindow { DataContext = vm };
         window.Show();
+    }
+
+    [RelayCommand]
+    private void CycleLogLevel()
+    {
+        var isDebug = App.LogLevelSwitch.MinimumLevel == LogEventLevel.Debug;
+        App.LogLevelSwitch.MinimumLevel = isDebug ? LogEventLevel.Information : LogEventLevel.Debug;
+        LogLevel = isDebug ? "INFO" : "DEBUG";
+        _logger.Information("Log level changed to {Level}", App.LogLevelSwitch.MinimumLevel);
     }
 
     [RelayCommand]

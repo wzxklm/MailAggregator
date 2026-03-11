@@ -75,6 +75,30 @@ public partial class AccountListViewModel : ObservableObject
     }
 
     [RelayCommand]
+    private async Task ToggleIdleAsync()
+    {
+        if (SelectedAccount == null) return;
+
+        var newValue = !SelectedAccount.UseIdle;
+        var email = SelectedAccount.EmailAddress;
+
+        try
+        {
+            SelectedAccount.UseIdle = newValue;
+            await _accountService.UpdateAccountAsync(SelectedAccount);
+            var mode = newValue ? "IDLE" : "Polling";
+            StatusText = $"{email}: switched to {mode}";
+        }
+        catch (Exception ex)
+        {
+            // Revert in-memory state on failure
+            SelectedAccount.UseIdle = !newValue;
+            _logger.Error(ex, "Failed to toggle IDLE for account");
+            StatusText = "Error toggling IDLE mode";
+        }
+    }
+
+    [RelayCommand]
     private async Task DeleteAccountAsync()
     {
         if (SelectedAccount == null) return;

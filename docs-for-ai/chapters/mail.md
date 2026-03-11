@@ -114,11 +114,13 @@ Last 30 days, summaries only (no body), batch save every 50
 
 ## Background Sync — `SyncManager.cs`
 
-- **Constants**: `IdleTimeout=29min`, `InitialReconnectDelay=1s`, `MaxReconnectDelay=300s`, `PollingInterval=59s`, `JitterFactor=0.25`
+- **Constants**: `IdleTimeout=29min`, `InitialReconnectDelay=1s`, `MaxReconnectDelay=300s`, `PollingInterval=59s`, `JitterFactor=0.25`, `MaxIdleFailuresBeforePolling=2`
 - **Per-account**: `ConcurrentDictionary<int, (Task, CancellationTokenSource)>`
 - **Watch loop** (`AccountSyncLoopAsync`): Connect → sync folders → inbox incremental (fires `NewEmailsReceived` if new messages found) → open Inbox → IDLE or poll
-  - **IDLE path**: `IdleWaitAsync` (29min timeout). IDLE rejection → poll fallback
-  - **Poll path**: `Task.Delay(PollingInterval)` + `NoOpAsync`
+  - **Per-account IDLE toggle**: `account.UseIdle` (default true). When false, skips IDLE entirely and uses polling regardless of server capability. Toggled via Account Management UI
+  - **IDLE path**: `IdleWaitAsync` (29min timeout, returns `bool`). Tracks consecutive IDLE failures; 2 failures → permanently sets `supportsIdle=false` for the connection session
+  - **Poll path**: `Task.Delay(PollingInterval)`
+  - **NOOP after every cycle**: `NoOpAsync` always sent (both IDLE and polling) to refresh folder state — needed for servers that don't reliably push EXISTS notifications (e.g. QQ Mail)
   - New messages → incremental sync → `NewEmailsReceived` event → loop
 - **Backoff**: `min(1s * 2^attempt, 300s)` ± 25% jitter, min clamped to 1s
 - **Network-aware**: `ManualResetEventSlim` — wait when down, unblock + reset attempt on restore

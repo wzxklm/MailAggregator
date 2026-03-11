@@ -28,6 +28,12 @@ public class Account
     public int? ProxyPort { get; set; }
 
     public bool IsEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Whether to use IMAP IDLE for real-time push notifications.
+    /// When false, SyncManager always uses polling regardless of server capability.
+    /// </summary>
+    public bool UseIdle { get; set; } = true;
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 
