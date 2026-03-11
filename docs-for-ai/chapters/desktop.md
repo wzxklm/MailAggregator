@@ -3,6 +3,8 @@
 ## Project Config
 
 **`MailAggregator.Desktop.csproj`**: `net8.0-windows`, WinExe, UseWPF+UseWindowsForms (NotifyIcon)
+- `ApplicationIcon`: `Resources\app.ico` (EXE icon)
+- `EmbeddedResource`: `Resources\app.ico` (loaded at runtime for NotifyIcon via `LoadEmbeddedIcon`)
 - Deps: CommunityToolkit.Mvvm 8.4.0, WebView2 1.0.3800.47, ModernWpfUI 0.9.6, DI 8.0.1
 
 ---
@@ -61,6 +63,8 @@ All windows use `ui:WindowHelper.UseModernWindowStyle="True"` for Fluent window 
 Toolbar replaced from `ToolBarTray` to custom `Border` command bar with `Segoe MDL2 Assets` icon font.
 
 **WebView2**: HTML body (fallback `<pre>` plaintext). Hardened (see `auth.md`)
+
+**Minimize-to-tray**: `OnStateChanged` hides window on minimize. `OnClosing` cancels close and hides (unless `NotificationHelper.IsExitRequested` is set by tray Exit).
 
 **Code-behind**: `Loaded` → init WebView2 + load accounts. `FolderTreeView_SelectedItemChanged` → `SelectFolderCommand`. `SelectedEmail` change → `UpdateEmailPreview`
 
@@ -172,4 +176,4 @@ Wrapper for real-time TOTP display (`ObservableObject`).
 
 ## NotificationHelper
 
-Static. `Initialize()` → NotifyIcon. `ShowNewMailNotification(email, count)` → 5s bubble. `Dispose()`.
+Static. `Initialize()` → NotifyIcon with context menu (Show / Exit) + double-click restore. Icon loaded via `LoadEmbeddedIcon()` (`Assembly.GetManifestResourceStream("MailAggregator.Desktop.Resources.app.ico")`). `RestoreMainWindow()` shows, restores, and activates MainWindow via Dispatcher. `IsExitRequested` flag signals MainWindow to allow close on tray Exit. `ShowNewMailNotification(email, count)` → 5s bubble (click restores). `Dispose()` cleans up icon + context menu.

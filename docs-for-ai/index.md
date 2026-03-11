@@ -56,7 +56,7 @@ Providers: Gmail, Microsoft, Yahoo, AOL, Fastmail, any standard IMAP/SMTP.
     ├── MailAggregator.Desktop/                     # net8.0-windows
     │   ├── App.xaml(.cs)                           # DI, Serilog, lifecycle
     │   ├── MainWindow.xaml(.cs)                    # 3-pane + WebView2
-    │   ├── Resources/Styles.xaml
+    │   ├── Resources/Styles.xaml, app.ico          # styles + embedded app icon
     │   ├── ViewModels/                             # Main, AddAccount, AccountList, Compose, TwoFactor*, NotificationHelper
     │   ├── Views/                                  # AddAccount, AccountList, Compose, TwoFactor, AddTwoFactor
     │   └── Converters/                             # BoolToFontWeight, BoolToVisibility, NullToVisibility, FileSize

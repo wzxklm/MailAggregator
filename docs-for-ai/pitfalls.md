@@ -50,6 +50,8 @@
 - **Use semantic color resources**: Use `SuccessBackgroundBrush`, `ErrorBackgroundBrush`, `InfoBackgroundBrush`, `SubtleBrush`, `CardBrush`, `CardBorderBrush` instead of hardcoding hex colors
 - **Icon buttons use Segoe MDL2 Assets**: Use separate `TextBlock` elements for icon (FontFamily="Segoe MDL2 Assets") and label text — do not mix FontFamily in one element
 - **`FallbackValue=Collapsed` for optional bindings**: When binding to a property that may not exist on the DataContext (e.g. `UnreadCount` on `AccountFolderNode`), add `FallbackValue=Collapsed` — otherwise WPF passes `DependencyProperty.UnsetValue` (not null) to converters, causing unexpected visibility
+- **Minimize-to-tray close guard**: `MainWindow.OnClosing` must check `NotificationHelper.IsExitRequested` — without it, the app becomes unkillable (close always hides). Tray Exit sets flag before `Application.Current.Shutdown()`
+- **Embedded resource naming**: `GetManifestResourceStream` uses `{AssemblyName}.{Path.With.Dots}` — e.g. `Resources\app.ico` → `"MailAggregator.Desktop.Resources.app.ico"`. Folder separators become dots
 
 ## Mail Discovery & Sync
 
