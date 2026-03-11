@@ -3,7 +3,7 @@
 ## Project Config
 
 **`MailAggregator.Desktop.csproj`**: `net8.0-windows`, WinExe, UseWPF+UseWindowsForms (NotifyIcon)
-- Deps: CommunityToolkit.Mvvm 8.4.0, WebView2 1.0.3800.47, DI 8.0.1
+- Deps: CommunityToolkit.Mvvm 8.4.0, WebView2 1.0.3800.47, ModernWpfUI 0.9.6, DI 8.0.1
 
 ---
 
@@ -22,16 +22,32 @@
 
 ## Styles — `Resources/Styles.xaml`
 
-4 converters, 9 color brushes (PrimaryBrush #0078D4, etc.), PrimaryButton/ToolbarButton styles, FolderTreeItem/EmailListItem/StatusBarText styles
+Built on **ModernWpf** base styles. `App.xaml` merges `ThemeResources` + `XamlControlsResources` before `Styles.xaml`.
+
+**Semantic color resources**: PrimaryBrush, SuccessBackgroundBrush, SuccessTextBrush, ErrorBackgroundBrush, InfoBackgroundBrush, SubtleBrush, CardBrush, CardBorderBrush
+
+**Styles** (BasedOn ModernWpf where applicable):
+- `PrimaryButton` / `AccentButton` — BasedOn `AccentButtonStyle`
+- `DangerButton` — red background, BasedOn `DefaultButtonStyle`
+- `ToolbarButton` — BasedOn `DefaultButtonStyle`
+- `EmailListItem` — BasedOn `DefaultListBoxItemStyle`
+- `SectionHeader`, `PageTitle` — typography styles
+- `StatusBarText`
+
+Removed legacy: `FolderTreeItem`, `CardStyle`
 
 ---
 
 ## MainWindow
 
+All windows use `ui:WindowHelper.UseModernWindowStyle="True"` for Fluent window chrome.
+
 ```
 ┌──────────────────────────────────────────────────┐
-│  Toolbar: Unified Inbox | New | Reply | Forward  │
-│  | Delete | Sync | Account Settings             │
+│  Command bar (Border): icon buttons with         │
+│  Segoe MDL2 Assets glyphs + text labels          │
+│  Unified Inbox | New | Reply | Forward           │
+│  | Delete | Sync | Accounts | 2FA               │
 ├──────────────────────────────────────────────────┤
 │  StatusBar: StatusText + sync progress           │
 ├───────────────┬──────────────────────────────────┤
@@ -41,6 +57,8 @@
 │    └ Inbox(3) │                                  │
 └───────────────┴──────────────────────────────────┘
 ```
+
+Toolbar replaced from `ToolBarTray` to custom `Border` command bar with `Segoe MDL2 Assets` icon font.
 
 **WebView2**: HTML body (fallback `<pre>` plaintext). Hardened (see `auth.md`)
 
@@ -72,7 +90,7 @@
 
 ## AddAccountWindow + AddAccountViewModel
 
-**5-step wizard**: 0: email → 1: discovery → 2: auth choice (OAuth/Password) → 3: manual config → 4: complete
+**5-step wizard**: 0: email → 1: discovery (`ui:ProgressRing` instead of ProgressBar) → 2: auth choice (OAuth/Password) → 3: manual config (`ui:ControlHelper.PlaceholderText` for TextBox placeholders) → 4: complete
 
 **Config passthrough**: Builds `ServerConfiguration` from UI fields → `manualConfig` param (skips re-discovery). `SelectedAuthType` passed explicitly.
 

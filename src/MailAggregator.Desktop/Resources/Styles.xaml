@@ -1,5 +1,6 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:ui="http://schemas.modernwpf.com/2019"
                     xmlns:converters="clr-namespace:MailAggregator.Desktop.Converters">
 
     <!-- Converters (app-wide) -->
@@ -8,97 +9,76 @@
     <converters:NullToVisibilityConverter x:Key="NullToVisibility" />
     <converters:FileSizeConverter x:Key="FileSizeConverter" />
 
-    <!-- Colors -->
+    <!-- Accent & semantic colors -->
     <SolidColorBrush x:Key="PrimaryBrush" Color="#0078D4" />
     <SolidColorBrush x:Key="PrimaryHoverBrush" Color="#106EBE" />
-    <SolidColorBrush x:Key="SidebarBrush" Color="#F3F3F3" />
+    <SolidColorBrush x:Key="SidebarBrush" Color="#F5F5F5" />
     <SolidColorBrush x:Key="SeparatorBrush" Color="#E0E0E0" />
     <SolidColorBrush x:Key="UnreadBrush" Color="#1A1A1A" />
-    <SolidColorBrush x:Key="ReadBrush" Color="#666666" />
+    <SolidColorBrush x:Key="ReadBrush" Color="#707070" />
     <SolidColorBrush x:Key="SelectedItemBrush" Color="#E5F1FB" />
-    <SolidColorBrush x:Key="ErrorBrush" Color="#D32F2F" />
+    <SolidColorBrush x:Key="ErrorBrush" Color="#C42B1C" />
+    <SolidColorBrush x:Key="ErrorBackgroundBrush" Color="#FFEBEE" />
     <SolidColorBrush x:Key="WarningBackgroundBrush" Color="#FFF8E1" />
     <SolidColorBrush x:Key="WarningBorderBrush" Color="#FFE082" />
     <SolidColorBrush x:Key="WarningTextBrush" Color="#5D4037" />
+    <SolidColorBrush x:Key="SuccessBackgroundBrush" Color="#E8F5E9" />
+    <SolidColorBrush x:Key="SuccessTextBrush" Color="#2E7D32" />
+    <SolidColorBrush x:Key="InfoBackgroundBrush" Color="#E3F2FD" />
+    <SolidColorBrush x:Key="SubtleBrush" Color="#9E9E9E" />
+    <SolidColorBrush x:Key="CardBrush" Color="#FFFFFF" />
+    <SolidColorBrush x:Key="CardBorderBrush" Color="#E8E8E8" />
 
-    <!-- Default button style -->
-    <Style x:Key="PrimaryButton" TargetType="Button">
-        <Setter Property="Background" Value="{StaticResource PrimaryBrush}" />
-        <Setter Property="Foreground" Value="White" />
+    <!-- Primary accent button (uses ModernWpf AccentButton style) -->
+    <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource AccentButtonStyle}">
         <Setter Property="Padding" Value="16,8" />
-        <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Cursor" Value="Hand" />
-        <Setter Property="Template">
-            <Setter.Value>
-                <ControlTemplate TargetType="Button">
-                    <Border Background="{TemplateBinding Background}"
-                            CornerRadius="4"
-                            Padding="{TemplateBinding Padding}">
-                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
-                    </Border>
-                    <ControlTemplate.Triggers>
-                        <Trigger Property="IsMouseOver" Value="True">
-                            <Setter Property="Background" Value="{StaticResource PrimaryHoverBrush}" />
-                        </Trigger>
-                        <Trigger Property="IsEnabled" Value="False">
-                            <Setter Property="Opacity" Value="0.5" />
-                        </Trigger>
-                    </ControlTemplate.Triggers>
-                </ControlTemplate>
-            </Setter.Value>
-        </Setter>
+        <Setter Property="FontSize" Value="13" />
     </Style>
 
-    <!-- Toolbar button style -->
-    <Style x:Key="ToolbarButton" TargetType="Button">
-        <Setter Property="Background" Value="Transparent" />
-        <Setter Property="Padding" Value="8,4" />
-        <Setter Property="BorderThickness" Value="0" />
+    <!-- Subtle toolbar button (uses ModernWpf default with transparent bg) -->
+    <Style x:Key="ToolbarButton" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+        <Setter Property="Padding" Value="10,6" />
         <Setter Property="Cursor" Value="Hand" />
-        <Setter Property="Template">
-            <Setter.Value>
-                <ControlTemplate TargetType="Button">
-                    <Border Background="{TemplateBinding Background}"
-                            CornerRadius="3"
-                            Padding="{TemplateBinding Padding}">
-                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
-                    </Border>
-                    <ControlTemplate.Triggers>
-                        <Trigger Property="IsMouseOver" Value="True">
-                            <Setter Property="Background" Value="{StaticResource SeparatorBrush}" />
-                        </Trigger>
-                        <Trigger Property="IsEnabled" Value="False">
-                            <Setter Property="Opacity" Value="0.4" />
-                        </Trigger>
-                    </ControlTemplate.Triggers>
-                </ControlTemplate>
-            </Setter.Value>
-        </Setter>
-    </Style>
-
-    <!-- Sidebar TreeViewItem style -->
-    <Style x:Key="FolderTreeItem" TargetType="TreeViewItem">
-        <Setter Property="Padding" Value="4,2" />
         <Setter Property="FontSize" Value="13" />
     </Style>
 
     <!-- Email list item style -->
-    <Style x:Key="EmailListItem" TargetType="ListBoxItem">
-        <Setter Property="Padding" Value="12,8" />
+    <Style x:Key="EmailListItem" TargetType="ListBoxItem" BasedOn="{StaticResource DefaultListBoxItemStyle}">
+        <Setter Property="Padding" Value="14,10" />
         <Setter Property="BorderBrush" Value="{StaticResource SeparatorBrush}" />
         <Setter Property="BorderThickness" Value="0,0,0,1" />
-        <Style.Triggers>
-            <Trigger Property="IsSelected" Value="True">
-                <Setter Property="Background" Value="{StaticResource SelectedItemBrush}" />
-            </Trigger>
-        </Style.Triggers>
     </Style>
 
-    <!-- Status bar style -->
+    <!-- Status bar text style -->
     <Style x:Key="StatusBarText" TargetType="TextBlock">
         <Setter Property="FontSize" Value="12" />
         <Setter Property="VerticalAlignment" Value="Center" />
         <Setter Property="Margin" Value="8,0" />
+        <Setter Property="Foreground" Value="{StaticResource ReadBrush}" />
+    </Style>
+
+    <!-- Section header text -->
+    <Style x:Key="SectionHeader" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{StaticResource ReadBrush}" />
+        <Setter Property="Margin" Value="0,0,0,8" />
+    </Style>
+
+    <!-- Page title text -->
+    <Style x:Key="PageTitle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="24" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Margin" Value="0,0,0,20" />
+    </Style>
+
+    <!-- Danger button (red) -->
+    <Style x:Key="DangerButton" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+        <Setter Property="Foreground" Value="{StaticResource ErrorBrush}" />
+        <Setter Property="Padding" Value="10,6" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="FontSize" Value="13" />
     </Style>
 
 </ResourceDictionary>

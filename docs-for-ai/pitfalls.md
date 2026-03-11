@@ -46,6 +46,9 @@
 - **`UseWindowsForms=true` required**: NotifyIcon depends on WinForms
 - **WinForms type ambiguity**: `MessageBox`, `Clipboard` exist in both namespaces. Use `System.Windows.MessageBox.Show()`, `System.Windows.Clipboard.SetText()` (CS0104)
 - **`BoolToVisibilityConverter` for Visibility only**: Returns `Visibility` enum, not for `bool?` bindings like `RadioButton.IsChecked`
+- **ModernWpf styles by key**: Reference base styles as `BasedOn="{StaticResource AccentButtonStyle}"`, `DefaultButtonStyle`, `DefaultListBoxItemStyle` — not by TargetType
+- **Use semantic color resources**: Use `SuccessBackgroundBrush`, `ErrorBackgroundBrush`, `InfoBackgroundBrush`, `SubtleBrush`, `CardBrush`, `CardBorderBrush` instead of hardcoding hex colors
+- **Icon buttons use Segoe MDL2 Assets**: Use separate `TextBlock` elements for icon (FontFamily="Segoe MDL2 Assets") and label text — do not mix FontFamily in one element
 
 ## Mail Discovery & Sync
 

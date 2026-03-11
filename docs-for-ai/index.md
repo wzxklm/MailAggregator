@@ -8,7 +8,7 @@ Windows desktop email client, direct IMAP/SMTP, no backend.
 
 | Key      | Value                                                   |
 | -------- | ------------------------------------------------------- |
-| Stack    | C# / .NET 8 / WPF / MailKit / EF Core SQLite / WebView2 |
+| Stack    | C# / .NET 8 / WPF / ModernWpfUI / MailKit / EF Core SQLite / WebView2 |
 | Arch     | MVVM (CommunityToolkit.Mvvm) + DI                       |
 | Platform | Win x64 (Core cross-platform, Desktop Windows-only)     |
 | Tests    | 237 xUnit                                               |
