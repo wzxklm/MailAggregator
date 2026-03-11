@@ -217,8 +217,12 @@ public class SyncManager : ISyncManager, IDisposable
                     account.Id, account.EmailAddress);
                 client = await _imapConnectionService.ConnectAsync(account, cancellationToken);
 
-                // Step 2: Sync folders using the IDLE client (avoids extra connection)
-                var folders = await _emailSyncService.SyncFoldersAsync(account, client, cancellationToken);
+                // Step 2: Load folders from DB; only sync from IMAP on first connection (no folders yet)
+                var folders = await _emailSyncService.GetFoldersFromDbAsync(account.Id, cancellationToken);
+                if (folders.Count == 0)
+                {
+                    folders = await _emailSyncService.SyncFoldersAsync(account, client, cancellationToken);
+                }
                 var inbox = folders.FirstOrDefault(f => f.SpecialUse == SpecialFolderType.Inbox);
 
                 if (inbox == null)

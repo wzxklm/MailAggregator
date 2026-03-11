@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -75,6 +76,17 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public async Task InitializeAsync()
     {
         await LoadAccountsAsync();
+
+        // Start background sync for all enabled accounts (once at startup)
+        foreach (var account in Accounts)
+        {
+            if (account.IsEnabled)
+            {
+                _ = _syncManager.StartAccountSyncAsync(account).ContinueWith(t =>
+                    _logger.Error(t.Exception, "Sync failed for {Email}", account.EmailAddress),
+                    TaskContinuationOptions.OnlyOnFaulted);
+            }
+        }
     }
 
     private Account? FindAccountById(int accountId)
@@ -127,12 +139,13 @@ public partial class MainViewModel : ObservableObject, IDisposable
             ct.ThrowIfCancellationRequested();
             Accounts = new ObservableCollection<Account>(accounts);
 
-            // Sync folders for all accounts concurrently (per-account errors don't block others)
+            // Load folders from DB for all accounts (no IMAP connection needed;
+            // folders are synced once on first account connection by SyncManager)
             var syncTasks = accounts.Select(async account =>
             {
                 try
                 {
-                    var folders = await _emailSyncService.SyncFoldersAsync(account, ct);
+                    var folders = await _emailSyncService.GetFoldersFromDbAsync(account.Id, ct);
                     return (account, folders: (IReadOnlyList<MailFolder>?)folders);
                 }
                 catch (OperationCanceledException)
@@ -141,7 +154,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 }
                 catch (Exception ex)
                 {
-                    _logger.Error(ex, "Failed to sync folders for {Email}", account.EmailAddress);
+                    _logger.Error(ex, "Failed to load folders for {Email}", account.EmailAddress);
                     return (account, folders: null);
                 }
             });
@@ -174,14 +187,6 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 }
 
                 newTree.Add(accountNode);
-
-                // Start background sync (don't pass ct — sync should outlive the load)
-                if (account.IsEnabled)
-                {
-                    _ = _syncManager.StartAccountSyncAsync(account).ContinueWith(t =>
-                        _logger.Error(t.Exception, "Sync failed for {Email}", account.EmailAddress),
-                        TaskContinuationOptions.OnlyOnFaulted);
-                }
             }
             FolderTree = newTree;
             await UpdateUnreadCountsAsync();
@@ -233,6 +238,11 @@ public partial class MainViewModel : ObservableObject, IDisposable
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             // User switched to another folder, silently abort
+        }
+        catch (IOException ex)
+        {
+            _logger.Error(ex, "Network error loading folder {FolderName}", node.DisplayName);
+            StatusText = $"Network error loading {node.DisplayName} — please click Refresh to retry";
         }
         catch (Exception ex)
         {
@@ -286,6 +296,11 @@ public partial class MainViewModel : ObservableObject, IDisposable
             await LoadEmailsForCurrentViewAsync();
 
             StatusText = $"Unified Inbox - {Emails.Count} message(s)";
+        }
+        catch (IOException ex)
+        {
+            _logger.Error(ex, "Network error loading unified inbox");
+            StatusText = "Network error loading inbox — please click Refresh to retry";
         }
         catch (Exception ex)
         {
@@ -378,9 +393,15 @@ public partial class MainViewModel : ObservableObject, IDisposable
             if (folderNode != null)
                 folderNode.UnreadCount = folderNode.UnreadCount > 1 ? folderNode.UnreadCount - 1 : null;
         }
+        catch (IOException ex)
+        {
+            _logger.Error(ex, "Network error marking message as read");
+            StatusText = "Network error marking as read — please click Refresh to retry";
+        }
         catch (Exception ex)
         {
             _logger.Error(ex, "Failed to mark message as read");
+            StatusText = "Error marking message as read";
         }
     }
 
@@ -398,6 +419,11 @@ public partial class MainViewModel : ObservableObject, IDisposable
             Emails.Remove(message);
             if (SelectedEmail == message) SelectedEmail = null;
             StatusText = "Message deleted";
+        }
+        catch (IOException ex)
+        {
+            _logger.Error(ex, "Network error deleting message");
+            StatusText = "Network error deleting message — please click Refresh to retry";
         }
         catch (Exception ex)
         {
@@ -471,10 +497,25 @@ public partial class MainViewModel : ObservableObject, IDisposable
         var vm = App.Services.GetRequiredService<AccountListViewModel>();
         var window = new Views.AccountListWindow { DataContext = vm };
         window.ShowDialog();
-        // Refresh after account changes
-        _ = LoadAccountsAsync().ContinueWith(t =>
+        // Refresh after account changes and start sync for any new accounts
+        _ = ReloadAccountsAndStartSyncAsync().ContinueWith(t =>
             _logger.Error(t.Exception, "Failed to reload accounts"),
             TaskContinuationOptions.OnlyOnFaulted);
+    }
+
+    private async Task ReloadAccountsAndStartSyncAsync()
+    {
+        await LoadAccountsAsync();
+
+        foreach (var account in Accounts)
+        {
+            if (account.IsEnabled)
+            {
+                _ = _syncManager.StartAccountSyncAsync(account).ContinueWith(t =>
+                    _logger.Error(t.Exception, "Sync failed for {Email}", account.EmailAddress),
+                    TaskContinuationOptions.OnlyOnFaulted);
+            }
+        }
     }
 
     partial void OnSelectedEmailChanged(EmailMessage? value)
@@ -523,9 +564,15 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
             await MarkAsReadAsync(listMessage);
         }
+        catch (IOException ex)
+        {
+            _logger.Error(ex, "Network error loading message body");
+            StatusText = "Network error loading message — please click Refresh to retry";
+        }
         catch (Exception ex)
         {
             _logger.Error(ex, "Failed to load full message");
+            StatusText = "Error loading message body";
         }
     }
 

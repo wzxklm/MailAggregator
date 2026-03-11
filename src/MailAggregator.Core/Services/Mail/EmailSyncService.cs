@@ -30,6 +30,49 @@ public class EmailSyncService : IEmailSyncService
     private SemaphoreSlim GetFolderLock(int folderId)
         => _folderSyncLocks.GetOrAdd(folderId, _ => new SemaphoreSlim(1, 1));
 
+    /// <summary>
+    /// Gets a pooled connection and executes the action. Retries once on IOException
+    /// (dead pooled connection whose TCP socket was silently dropped by firewall/NAT).
+    /// </summary>
+    private async Task WithPooledConnectionAsync(Account account, Func<ImapClient, Task> action, CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            using var pooled = await _connectionPool.GetConnectionAsync(account, cancellationToken);
+            try
+            {
+                await action(pooled.Client);
+                return;
+            }
+            catch (IOException) when (attempt == 0)
+            {
+                // Dead pooled connection — let it be disposed, then retry with a fresh one
+            }
+        }
+    }
+
+    /// <summary>
+    /// Gets a pooled connection and executes the action, returning its result. Retries once on IOException
+    /// (dead pooled connection whose TCP socket was silently dropped by firewall/NAT).
+    /// </summary>
+    private async Task<T> WithPooledConnectionAsync<T>(Account account, Func<ImapClient, Task<T>> action, CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            using var pooled = await _connectionPool.GetConnectionAsync(account, cancellationToken);
+            try
+            {
+                return await action(pooled.Client);
+            }
+            catch (IOException) when (attempt == 0)
+            {
+                // Dead pooled connection — let it be disposed, then retry with a fresh one
+            }
+        }
+
+        throw new InvalidOperationException("Unreachable");
+    }
+
     public EmailSyncService(
         IImapConnectionPool connectionPool,
         IDbContextFactory<MailAggregatorDbContext> dbContextFactory,
@@ -44,25 +87,11 @@ public class EmailSyncService : IEmailSyncService
     {
         ArgumentNullException.ThrowIfNull(account);
 
-        // Retry once on IOException: pooled connections may appear alive (IsConnected=true)
-        // but have a dead TCP socket (e.g. silently dropped by firewall/NAT). The first
-        // failure disposes the bad connection; the retry gets a fresh one.
-        for (var attempt = 0; attempt < 2; attempt++)
+        return await WithPooledConnectionAsync(account, async client =>
         {
-            using var pooled = await _connectionPool.GetConnectionAsync(account, cancellationToken);
             using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
-            try
-            {
-                return await SyncFoldersCoreAsync(account, pooled.Client, dbContext, cancellationToken);
-            }
-            catch (IOException) when (attempt == 0)
-            {
-                // Dead pooled connection — let it be disposed, then retry with a fresh one
-            }
-        }
-
-        // Unreachable: the second attempt either returns or throws
-        throw new InvalidOperationException("Unreachable");
+            return await SyncFoldersCoreAsync(account, client, dbContext, cancellationToken);
+        }, cancellationToken);
     }
 
     public async Task<IReadOnlyList<LocalMailFolder>> SyncFoldersAsync(Account account, ImapClient client, CancellationToken cancellationToken = default)
@@ -122,6 +151,15 @@ public class EmailSyncService : IEmailSyncService
         return localFolders.Where(f => serverFolderNames.Contains(f.FullName))
             .Concat(dbContext.Folders.Local.Where(f => f.AccountId == account.Id && !localFolderMap.ContainsKey(f.FullName)))
             .ToList();
+    }
+
+    public async Task<IReadOnlyList<LocalMailFolder>> GetFoldersFromDbAsync(int accountId, CancellationToken cancellationToken = default)
+    {
+        using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
+        return await dbContext.Folders
+            .Where(f => f.AccountId == accountId)
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
     }
 
     public async Task SyncInitialAsync(Account account, LocalMailFolder folder, CancellationToken cancellationToken = default)
@@ -188,25 +226,11 @@ public class EmailSyncService : IEmailSyncService
         await folderLock.WaitAsync(cancellationToken);
         try
         {
-            // Retry once on IOException: pooled connections may appear alive (IsConnected=true)
-            // but have a dead TCP socket (e.g. silently dropped by firewall/NAT). The first
-            // failure disposes the bad connection; the retry gets a fresh one.
-            for (var attempt = 0; attempt < 2; attempt++)
+            return await WithPooledConnectionAsync(account, async client =>
             {
-                using var pooled = await _connectionPool.GetConnectionAsync(account, cancellationToken);
                 using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
-                try
-                {
-                    return await SyncIncrementalCoreAsync(account, folder, pooled.Client, dbContext, cancellationToken);
-                }
-                catch (IOException) when (attempt == 0)
-                {
-                    // Dead pooled connection — let it be disposed, then retry with a fresh one
-                }
-            }
-
-            // Unreachable: the second attempt either returns or throws
-            throw new InvalidOperationException("Unreachable");
+                return await SyncIncrementalCoreAsync(account, folder, client, dbContext, cancellationToken);
+            }, cancellationToken);
         }
         finally
         {
@@ -333,37 +357,38 @@ public class EmailSyncService : IEmailSyncService
         var folder = await dbContext.Folders.FindAsync(new object[] { message.FolderId }, cancellationToken)
             ?? throw new InvalidOperationException($"Folder {message.FolderId} not found.");
 
-        using var pooled = await _connectionPool.GetConnectionAsync(account, cancellationToken);
-        var client = pooled.Client;
-        var imapFolder = await client.GetFolderAsync(folder.FullName, cancellationToken);
-        await imapFolder.OpenAsync(FolderAccess.ReadWrite, cancellationToken);
-
-        var uid = new UniqueId(message.Uid);
-        if (isRead)
-            await imapFolder.AddFlagsAsync(uid, MessageFlags.Seen, true, cancellationToken);
-        else
-            await imapFolder.RemoveFlagsAsync(uid, MessageFlags.Seen, true, cancellationToken);
-
-        message.IsRead = isRead;
-        var tracked = dbContext.ChangeTracker.Entries<EmailMessage>()
-            .FirstOrDefault(e => e.Entity.Id == message.Id);
-
-        if (tracked != null)
+        await WithPooledConnectionAsync(account, async client =>
         {
-            tracked.Entity.IsRead = isRead;
-            tracked.Property(m => m.IsRead).IsModified = true;
-        }
-        else
-        {
-            dbContext.Messages.Attach(message);
-            dbContext.Entry(message).Property(m => m.IsRead).IsModified = true;
-        }
-        await dbContext.SaveChangesAsync(cancellationToken);
+            var imapFolder = await client.GetFolderAsync(folder.FullName, cancellationToken);
+            await imapFolder.OpenAsync(FolderAccess.ReadWrite, cancellationToken);
 
-        await imapFolder.CloseAsync(false, cancellationToken);
+            var uid = new UniqueId(message.Uid);
+            if (isRead)
+                await imapFolder.AddFlagsAsync(uid, MessageFlags.Seen, true, cancellationToken);
+            else
+                await imapFolder.RemoveFlagsAsync(uid, MessageFlags.Seen, true, cancellationToken);
 
-        _logger.Information("Set message UID {Uid} in {Folder} as {ReadStatus} for {Email}",
-            message.Uid, folder.FullName, isRead ? "read" : "unread", account.EmailAddress);
+            message.IsRead = isRead;
+            var tracked = dbContext.ChangeTracker.Entries<EmailMessage>()
+                .FirstOrDefault(e => e.Entity.Id == message.Id);
+
+            if (tracked != null)
+            {
+                tracked.Entity.IsRead = isRead;
+                tracked.Property(m => m.IsRead).IsModified = true;
+            }
+            else
+            {
+                dbContext.Messages.Attach(message);
+                dbContext.Entry(message).Property(m => m.IsRead).IsModified = true;
+            }
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            await imapFolder.CloseAsync(false, cancellationToken);
+
+            _logger.Information("Set message UID {Uid} in {Folder} as {ReadStatus} for {Email}",
+                message.Uid, folder.FullName, isRead ? "read" : "unread", account.EmailAddress);
+        }, cancellationToken);
     }
 
     public async Task DownloadAttachmentAsync(Account account, EmailMessage message, EmailAttachment attachment, string savePath, CancellationToken cancellationToken = default)
@@ -378,12 +403,16 @@ public class EmailSyncService : IEmailSyncService
         var folder = await dbContext.Folders.FindAsync(new object[] { message.FolderId }, cancellationToken)
             ?? throw new InvalidOperationException($"Folder {message.FolderId} not found.");
 
-        using var pooled = await _connectionPool.GetConnectionAsync(account, cancellationToken);
-        var imapFolder = await pooled.Client.GetFolderAsync(folder.FullName, cancellationToken);
-        await imapFolder.OpenAsync(FolderAccess.ReadOnly, cancellationToken);
+        var mimeMessage = await WithPooledConnectionAsync(account, async client =>
+        {
+            var imapFolder = await client.GetFolderAsync(folder.FullName, cancellationToken);
+            await imapFolder.OpenAsync(FolderAccess.ReadOnly, cancellationToken);
 
-        var uid = new UniqueId(message.Uid);
-        var mimeMessage = await imapFolder.GetMessageAsync(uid, cancellationToken);
+            var uid = new UniqueId(message.Uid);
+            var mime = await imapFolder.GetMessageAsync(uid, cancellationToken);
+            await imapFolder.CloseAsync(false, cancellationToken);
+            return mime;
+        }, cancellationToken);
 
         var mimePart = FindAttachmentPart(mimeMessage, attachment);
         if (mimePart == null)
@@ -403,8 +432,6 @@ public class EmailSyncService : IEmailSyncService
         dbContext.Attachments.Update(attachment);
         await dbContext.SaveChangesAsync(cancellationToken);
 
-        await imapFolder.CloseAsync(false, cancellationToken);
-
         _logger.Information("Downloaded attachment '{FileName}' for message UID {Uid} in {Email}",
             attachment.FileName, message.Uid, account.EmailAddress);
     }
@@ -420,28 +447,29 @@ public class EmailSyncService : IEmailSyncService
         var sourceFolder = await dbContext.Folders.FindAsync(new object[] { message.FolderId }, cancellationToken)
             ?? throw new InvalidOperationException($"Source folder {message.FolderId} not found.");
 
-        using var pooled = await _connectionPool.GetConnectionAsync(account, cancellationToken);
-        var client = pooled.Client;
-        var imapSourceFolder = await client.GetFolderAsync(sourceFolder.FullName, cancellationToken);
-        var imapDestFolder = await client.GetFolderAsync(destinationFolder.FullName, cancellationToken);
+        await WithPooledConnectionAsync(account, async client =>
+        {
+            var imapSourceFolder = await client.GetFolderAsync(sourceFolder.FullName, cancellationToken);
+            var imapDestFolder = await client.GetFolderAsync(destinationFolder.FullName, cancellationToken);
 
-        await imapSourceFolder.OpenAsync(FolderAccess.ReadWrite, cancellationToken);
+            await imapSourceFolder.OpenAsync(FolderAccess.ReadWrite, cancellationToken);
 
-        var uid = new UniqueId(message.Uid);
-        var newUid = await imapSourceFolder.MoveToAsync(uid, imapDestFolder, cancellationToken);
+            var uid = new UniqueId(message.Uid);
+            var newUid = await imapSourceFolder.MoveToAsync(uid, imapDestFolder, cancellationToken);
 
-        // Update local cache
-        message.FolderId = destinationFolder.Id;
-        if (newUid.HasValue)
-            message.Uid = newUid.Value.Id;
+            // Update local cache
+            message.FolderId = destinationFolder.Id;
+            if (newUid.HasValue)
+                message.Uid = newUid.Value.Id;
 
-        dbContext.Messages.Update(message);
-        await dbContext.SaveChangesAsync(cancellationToken);
+            dbContext.Messages.Update(message);
+            await dbContext.SaveChangesAsync(cancellationToken);
 
-        await imapSourceFolder.CloseAsync(false, cancellationToken);
+            await imapSourceFolder.CloseAsync(false, cancellationToken);
 
-        _logger.Information("Moved message UID {Uid} from {Source} to {Dest} for {Email}",
-            message.Uid, sourceFolder.FullName, destinationFolder.FullName, account.EmailAddress);
+            _logger.Information("Moved message UID {Uid} from {Source} to {Dest} for {Email}",
+                message.Uid, sourceFolder.FullName, destinationFolder.FullName, account.EmailAddress);
+        }, cancellationToken);
     }
 
     public async Task DeleteMessageAsync(Account account, EmailMessage message, CancellationToken cancellationToken = default)
@@ -458,21 +486,23 @@ public class EmailSyncService : IEmailSyncService
         // If already in Trash, just mark as deleted and expunge
         if (message.FolderId == trashFolder.Id)
         {
-            using var pooled = await _connectionPool.GetConnectionAsync(account, cancellationToken);
-            var imapFolder = await pooled.Client.GetFolderAsync(trashFolder.FullName, cancellationToken);
-            await imapFolder.OpenAsync(FolderAccess.ReadWrite, cancellationToken);
+            await WithPooledConnectionAsync(account, async client =>
+            {
+                var imapFolder = await client.GetFolderAsync(trashFolder.FullName, cancellationToken);
+                await imapFolder.OpenAsync(FolderAccess.ReadWrite, cancellationToken);
 
-            var uid = new UniqueId(message.Uid);
-            await imapFolder.AddFlagsAsync(uid, MessageFlags.Deleted, true, cancellationToken);
-            await imapFolder.ExpungeAsync(cancellationToken);
+                var uid = new UniqueId(message.Uid);
+                await imapFolder.AddFlagsAsync(uid, MessageFlags.Deleted, true, cancellationToken);
+                await imapFolder.ExpungeAsync(cancellationToken);
 
-            dbContext.Messages.Remove(message);
-            await dbContext.SaveChangesAsync(cancellationToken);
+                dbContext.Messages.Remove(message);
+                await dbContext.SaveChangesAsync(cancellationToken);
 
-            await imapFolder.CloseAsync(false, cancellationToken);
+                await imapFolder.CloseAsync(false, cancellationToken);
 
-            _logger.Information("Permanently deleted message UID {Uid} from Trash for {Email}",
-                message.Uid, account.EmailAddress);
+                _logger.Information("Permanently deleted message UID {Uid} from Trash for {Email}",
+                    message.Uid, account.EmailAddress);
+            }, cancellationToken);
             return;
         }
 
@@ -490,33 +520,14 @@ public class EmailSyncService : IEmailSyncService
         var folder = await dbContext.Folders.FindAsync(new object[] { message.FolderId }, cancellationToken)
             ?? throw new InvalidOperationException($"Folder {message.FolderId} not found.");
 
-        // Retry once on IOException: pooled connections may appear alive (IsConnected=true)
-        // but have a dead TCP socket (e.g. silently dropped by firewall/NAT). The first
-        // failure disposes the bad connection; the retry gets a fresh one.
-        MimeMessage mimeMessage;
-        IMailFolder imapFolder;
-        for (var attempt = 0; attempt < 2; attempt++)
+        var mimeMessage = await WithPooledConnectionAsync(account, async client =>
         {
-            using var pooled = await _connectionPool.GetConnectionAsync(account, cancellationToken);
-            try
-            {
-                imapFolder = await pooled.Client.GetFolderAsync(folder.FullName, cancellationToken);
-                await imapFolder.OpenAsync(FolderAccess.ReadOnly, cancellationToken);
+            var imapFolder = await client.GetFolderAsync(folder.FullName, cancellationToken);
+            await imapFolder.OpenAsync(FolderAccess.ReadOnly, cancellationToken);
 
-                var uid = new UniqueId(message.Uid);
-                mimeMessage = await imapFolder.GetMessageAsync(uid, cancellationToken);
-                goto fetched;
-            }
-            catch (IOException) when (attempt == 0)
-            {
-                // Dead pooled connection — let it be disposed, then retry with a fresh one
-            }
-        }
-
-        // Unreachable: the second attempt either returns or throws
-        throw new InvalidOperationException("Unreachable");
-
-        fetched:
+            var uid = new UniqueId(message.Uid);
+            return await imapFolder.GetMessageAsync(uid, cancellationToken);
+        }, cancellationToken);
 
         message.BodyText = mimeMessage.TextBody;
         message.BodyHtml = mimeMessage.HtmlBody;

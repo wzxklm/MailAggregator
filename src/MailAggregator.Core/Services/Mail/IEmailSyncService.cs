@@ -18,6 +18,12 @@ public interface IEmailSyncService
     Task<IReadOnlyList<MailFolder>> SyncFoldersAsync(Account account, ImapClient client, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Reads the folder list for the account from the local database (no IMAP connection).
+    /// Returns empty list if no folders have been synced yet.
+    /// </summary>
+    Task<IReadOnlyList<MailFolder>> GetFoldersFromDbAsync(int accountId, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Performs initial sync: pulls envelope info and body for emails from the last 30 days.
     /// </summary>
     Task SyncInitialAsync(Account account, MailFolder folder, CancellationToken cancellationToken = default);

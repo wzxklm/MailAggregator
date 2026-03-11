@@ -62,6 +62,9 @@ Uses `IDbContextFactory` — scoped DbContext per operation (thread safety).
 ### Folder sync (`SyncFoldersCoreAsync`)
 IMAP folder list → SPECIAL-USE mapping → DB sync (add/update/delete)
 
+### Folder read from DB (`GetFoldersFromDbAsync`)
+Reads folders for an account directly from the local database (no IMAP connection). Returns empty list if no folders have been synced yet. Used by `MainViewModel` and `SyncManager` to avoid redundant IMAP folder syncs after initial connection.
+
 ### Initial sync (`SyncInitialAsync`)
 Last 30 days, summaries only (no body), batch save every 50
 
@@ -117,7 +120,7 @@ Last 30 days, summaries only (no body), batch save every 50
 
 - **Constants**: `IdleTimeout=29min`, `InitialReconnectDelay=1s`, `MaxReconnectDelay=300s`, `PollingInterval=59s`, `JitterFactor=0.25`, `MaxIdleFailuresBeforePolling=2`
 - **Per-account**: `ConcurrentDictionary<int, (Task, CancellationTokenSource)>`
-- **Watch loop** (`AccountSyncLoopAsync`): Connect → sync folders → inbox incremental (fires `NewEmailsReceived` if new messages found) → open Inbox → IDLE or poll
+- **Watch loop** (`AccountSyncLoopAsync`): Connect → load folders from DB (IMAP sync only on first connection when DB has no folders) → inbox incremental (fires `NewEmailsReceived` if new messages found) → open Inbox → IDLE or poll
   - **Per-account IDLE toggle**: `account.UseIdle` (default true). When false, skips IDLE entirely and uses polling regardless of server capability. Toggled via Account Management UI
   - **IDLE path**: `IdleWaitAsync` (29min timeout, returns `bool`). Subscribes to `imapInbox.CountChanged` to cancel the done token immediately when the server pushes EXISTS (new mail), so `IdleAsync` returns within seconds instead of waiting for the full timeout. Tracks consecutive IDLE failures; 2 failures → permanently sets `supportsIdle=false` for the connection session
   - **Poll path**: `Task.Delay(PollingInterval)`

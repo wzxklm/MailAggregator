@@ -73,11 +73,7 @@
                     <Rectangle Width="1" Fill="{StaticResource SeparatorBrush}" Margin="8,4" />
 
                     <Button Style="{StaticResource ToolbarButton}"
-                            Command="{Binding ShowUnifiedInboxCommand}" ToolTip="Unified Inbox" Margin="2,0">
-                        <TextBlock Text="&#xE715;" FontFamily="Segoe MDL2 Assets" FontSize="15" />
-                    </Button>
-                    <Button Style="{StaticResource ToolbarButton}"
-                            Command="{Binding LoadAccountsCommand}" ToolTip="Sync" Margin="2,0">
+                            Command="{Binding LoadAccountsCommand}" ToolTip="Refresh" Margin="2,0">
                         <TextBlock Text="&#xE895;" FontFamily="Segoe MDL2 Assets" FontSize="15" />
                     </Button>
                 </StackPanel>
