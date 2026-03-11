@@ -67,6 +67,7 @@ Last 30 days, summaries only (no body), batch save every 50
 
 ### Incremental sync (`SyncIncrementalAsync`) → `Task<int>`
 - Returns count of new messages synced
+- **IOException retry**: Retries once on `IOException` — pooled connections may appear alive (`IsConnected=true`) but have a dead TCP socket (silently dropped by firewall/NAT). First failure disposes the bad connection; retry gets a fresh one
 - Check UIDVALIDITY (changed → reset + re-sync via `SyncInitialCoreAsync`)
 - Fetch new (UID > MaxUid) + `SyncFlagsAndDetectDeletionsAsync`
 - Folder update via `Attach` + `IsModified` (avoids `Update()` cascade)
@@ -120,7 +121,7 @@ Last 30 days, summaries only (no body), batch save every 50
   - **Per-account IDLE toggle**: `account.UseIdle` (default true). When false, skips IDLE entirely and uses polling regardless of server capability. Toggled via Account Management UI
   - **IDLE path**: `IdleWaitAsync` (29min timeout, returns `bool`). Tracks consecutive IDLE failures; 2 failures → permanently sets `supportsIdle=false` for the connection session
   - **Poll path**: `Task.Delay(PollingInterval)`
-  - **NOOP after every cycle**: `NoOpAsync` always sent (both IDLE and polling) to refresh folder state — needed for servers that don't reliably push EXISTS notifications (e.g. QQ Mail)
+  - **STATUS after every cycle**: `imapInbox.StatusAsync(StatusItems.Count)` always sent (both IDLE and polling) to refresh folder state and reset server-side idle timer. Uses STATUS instead of NOOP because some servers (e.g. 163.com) treat NOOP-only sessions as idle and auto-logout. Also provides authoritative message count for servers that don't reliably push EXISTS (e.g. QQ Mail)
   - New messages → incremental sync → `NewEmailsReceived` event → loop
 - **Backoff**: `min(1s * 2^attempt, 300s)` ± 25% jitter, min clamped to 1s
 - **Network-aware**: `ManualResetEventSlim` — wait when down, unblock + reset attempt on restore

@@ -171,9 +171,25 @@ public class EmailSyncService : IEmailSyncService
         await folderLock.WaitAsync(cancellationToken);
         try
         {
-            using var pooled = await _connectionPool.GetConnectionAsync(account, cancellationToken);
-            using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
-            return await SyncIncrementalCoreAsync(account, folder, pooled.Client, dbContext, cancellationToken);
+            // Retry once on IOException: pooled connections may appear alive (IsConnected=true)
+            // but have a dead TCP socket (e.g. silently dropped by firewall/NAT). The first
+            // failure disposes the bad connection; the retry gets a fresh one.
+            for (var attempt = 0; attempt < 2; attempt++)
+            {
+                using var pooled = await _connectionPool.GetConnectionAsync(account, cancellationToken);
+                using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
+                try
+                {
+                    return await SyncIncrementalCoreAsync(account, folder, pooled.Client, dbContext, cancellationToken);
+                }
+                catch (IOException) when (attempt == 0)
+                {
+                    // Dead pooled connection — let it be disposed, then retry with a fresh one
+                }
+            }
+
+            // Unreachable: the second attempt either returns or throws
+            throw new InvalidOperationException("Unreachable");
         }
         finally
         {

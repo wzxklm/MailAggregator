@@ -286,9 +286,13 @@ public class SyncManager : ISyncManager, IDisposable
                     if (cancellationToken.IsCancellationRequested)
                         break;
 
-                    // Step 6: NOOP refreshes folder state — needed for polling servers and also
-                    // for IDLE servers that don't reliably push EXISTS notifications (e.g. QQ Mail)
-                    await client.NoOpAsync(cancellationToken);
+                    // Step 6: STATUS refreshes folder state and resets the server-side idle timer.
+                    // Using STATUS instead of NOOP because some servers (e.g. 163.com) treat
+                    // NOOP-only sessions as idle and auto-logout after a few minutes, whereas
+                    // STATUS is a real mail operation that resets their idle timer.
+                    // For IDLE servers that don't push EXISTS reliably (e.g. QQ Mail), STATUS
+                    // also provides an authoritative message count.
+                    await imapInbox.StatusAsync(StatusItems.Count, cancellationToken);
 
                     var currentCount = imapInbox.Count;
                     if (currentCount > previousCount)
