@@ -76,6 +76,34 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private Account? FindAccountById(int accountId)
         => Accounts.FirstOrDefault(a => a.Id == accountId);
 
+    private AccountFolderNode? FindFolderNode(int folderId)
+        => FolderTree.SelectMany(a => a.Children).FirstOrDefault(f => f.Folder?.Id == folderId);
+
+    private async Task UpdateUnreadCountsAsync()
+    {
+        using var scope = App.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<Core.Data.MailAggregatorDbContext>();
+
+        var folderNodes = FolderTree.SelectMany(a => a.Children)
+            .Where(f => f.Folder != null).ToList();
+        var folderIds = folderNodes.Select(f => f.Folder!.Id).ToList();
+
+        var counts = await dbContext.Messages
+            .Where(m => folderIds.Contains(m.FolderId) && !m.IsRead)
+            .GroupBy(m => m.FolderId)
+            .Select(g => new { FolderId = g.Key, Count = g.Count() })
+            .ToListAsync();
+
+        var countDict = counts.ToDictionary(c => c.FolderId, c => c.Count);
+
+        foreach (var node in folderNodes)
+        {
+            var newCount = countDict.TryGetValue(node.Folder!.Id, out var count) && count > 0 ? count : (int?)null;
+            if (node.UnreadCount != newCount)
+                node.UnreadCount = newCount;
+        }
+    }
+
     [RelayCommand]
     private async Task LoadAccountsAsync()
     {
@@ -152,6 +180,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 }
             }
             FolderTree = newTree;
+            await UpdateUnreadCountsAsync();
 
             // Select first inbox by default
             var firstInbox = FolderTree
@@ -337,6 +366,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
             await _emailSyncService.SetMessageReadAsync(account, message, true);
             message.IsRead = true;
+
+            var folderNode = FindFolderNode(message.FolderId);
+            if (folderNode != null)
+                folderNode.UnreadCount = folderNode.UnreadCount > 1 ? folderNode.UnreadCount - 1 : null;
         }
         catch (Exception ex)
         {
@@ -544,6 +577,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
             if (newMessages.Count > 0)
             {
                 Emails = new ObservableCollection<EmailMessage>(newMessages.Concat(Emails));
+                await UpdateUnreadCountsAsync();
             }
         }
         catch (Exception ex)
@@ -558,6 +592,9 @@ public partial class AccountFolderNode : ObservableObject
 {
     [ObservableProperty]
     private string _displayName = string.Empty;
+
+    [ObservableProperty]
+    private int? _unreadCount;
 
     public Account? Account { get; set; }
     public MailFolder? Folder { get; set; }

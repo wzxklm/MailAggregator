@@ -49,6 +49,7 @@
 - **ModernWpf styles by key**: Reference base styles as `BasedOn="{StaticResource AccentButtonStyle}"`, `DefaultButtonStyle`, `DefaultListBoxItemStyle` — not by TargetType
 - **Use semantic color resources**: Use `SuccessBackgroundBrush`, `ErrorBackgroundBrush`, `InfoBackgroundBrush`, `SubtleBrush`, `CardBrush`, `CardBorderBrush` instead of hardcoding hex colors
 - **Icon buttons use Segoe MDL2 Assets**: Use separate `TextBlock` elements for icon (FontFamily="Segoe MDL2 Assets") and label text — do not mix FontFamily in one element
+- **`FallbackValue=Collapsed` for optional bindings**: When binding to a property that may not exist on the DataContext (e.g. `UnreadCount` on `AccountFolderNode`), add `FallbackValue=Collapsed` — otherwise WPF passes `DependencyProperty.UnsetValue` (not null) to converters, causing unexpected visibility
 
 ## Mail Discovery & Sync
 

@@ -82,9 +82,11 @@ Toolbar replaced from `ToolBarTray` to custom `Border` command bar with `Segoe M
 
 **Email selection**: `SelectedEmail` → `LoadFullMessageAndMarkReadAsync()`: DB body (if cached) → if not cached or has unresolved `cid:` → IMAP fetch → fill body + attachments → mark read
 
-**New email event**: `OnNewEmailsReceived()` → Dispatcher → Toast → insert at top
+**New email event**: `OnNewEmailsReceived()` → Dispatcher → Toast → insert at top → update unread counts
 
-**Nested**: `AccountFolderNode : ObservableObject` for TreeView
+**Unread counts**: `UpdateUnreadCountsAsync()` queries `Messages` table (grouped `COUNT WHERE !IsRead`), updates `AccountFolderNode.UnreadCount` with change-detection guard. Called on load and new-email sync. `MarkAsReadAsync` decrements locally. XAML badge uses `NullToVisibility` + `FallbackValue=Collapsed`.
+
+**Nested**: `AccountFolderNode : ObservableObject` (`DisplayName`, `UnreadCount`, `Account`, `Folder`, `IsAccount`, `Children`) for TreeView
 
 ---
 
@@ -108,7 +110,7 @@ Non-modal, 4 modes: New/Reply/ReplyAll/Forward. Sender dropdown, attachments. `S
 
 ## AccountListWindow + AccountListViewModel
 
-Modal. Account list (email, host, auth, enabled). Add/edit/delete with confirmation.
+Modal. Account list (email, host, auth). Add/edit/delete with confirmation.
 
 ---
 

@@ -35,35 +35,6 @@
                             Background="{StaticResource CardBrush}"
                             BorderBrush="{StaticResource CardBorderBrush}" BorderThickness="1">
                         <DockPanel>
-                            <!-- Status badge -->
-                            <Border DockPanel.Dock="Right" CornerRadius="4" Padding="8,3"
-                                    VerticalAlignment="Center">
-                                <Border.Style>
-                                    <Style TargetType="Border">
-                                        <Setter Property="Background" Value="{StaticResource SuccessBackgroundBrush}" />
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding IsEnabled}" Value="False">
-                                                <Setter Property="Background" Value="{StaticResource ErrorBackgroundBrush}" />
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </Border.Style>
-                                <TextBlock FontSize="11" FontWeight="SemiBold">
-                                    <TextBlock.Style>
-                                        <Style TargetType="TextBlock">
-                                            <Setter Property="Text" Value="Enabled" />
-                                            <Setter Property="Foreground" Value="{StaticResource SuccessTextBrush}" />
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding IsEnabled}" Value="False">
-                                                    <Setter Property="Text" Value="Disabled" />
-                                                    <Setter Property="Foreground" Value="{StaticResource ErrorBrush}" />
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </TextBlock.Style>
-                                </TextBlock>
-                            </Border>
-
                             <!-- Account info -->
                             <StackPanel>
                                 <TextBlock Text="{Binding EmailAddress}" FontWeight="SemiBold" FontSize="14" />
