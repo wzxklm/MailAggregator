@@ -2,66 +2,32 @@
 
 ## Project Config
 
-**File**: `src/MailAggregator.Desktop/MailAggregator.Desktop.csproj`
-- TargetFramework: `net8.0-windows` (Windows only)
-- OutputType: WinExe
-- UseWPF: true, UseWindowsForms: true (NotifyIcon for Toast)
-- Key deps: CommunityToolkit.Mvvm 8.4.0, WebView2 1.0.3800.47, DI 8.0.1
+**`MailAggregator.Desktop.csproj`**: `net8.0-windows`, WinExe, UseWPF+UseWindowsForms (NotifyIcon)
+- Deps: CommunityToolkit.Mvvm 8.4.0, WebView2 1.0.3800.47, DI 8.0.1
 
 ---
 
-## App Entry — `App.xaml` / `App.xaml.cs`
+## App Entry — `App.xaml.cs`
 
-**DI container core.** Configures all service dependency injection.
-
-**Startup flow** (`OnStartup`):
-1. Create app directory: `%AppData%\MailAggregator\`
-2. Configure Serilog (rolling log, 7-day retention)
-3. Build DI `ServiceCollection` → store as `App.Services`
-4. Initialize database
-5. Initialize notification helper
-6. Show MainWindow
+**Startup** (`OnStartup`): Create `%AppData%\MailAggregator\` → Serilog (7-day rolling) → DI → DB init → notifications → MainWindow
 
 **DI registrations**:
-| Service | Lifetime | Implementation |
-|---------|----------|----------------|
-| `IKeyProtector` | Singleton | `DpapiKeyProtector` |
-| `ICredentialEncryptionService` | Singleton | `CredentialEncryptionService` |
-| `IPasswordAuthService` | Singleton | `PasswordAuthService` |
-| `IOAuthService` | Singleton | `OAuthService` |
-| `HttpClient` | Singleton | `HttpClient` |
-| `IAutoDiscoveryService` | Singleton | `AutoDiscoveryService` |
-| `IImapConnectionService` | Singleton | `ImapConnectionService` |
-| `ISmtpConnectionService` | Singleton | `SmtpConnectionService` |
-| `IImapConnectionPool` | Singleton | `ImapConnectionPool` |
-| `ITwoFactorCodeService` | Singleton | `TwoFactorCodeService` |
-| `ISyncManager` | Singleton | `SyncManager` |
-| `IDbContextFactory` | Scoped | `MailAggregatorDbContext` |
-| `IEmailSyncService` | Scoped | `EmailSyncService` |
-| `IEmailSendService` | Scoped | `EmailSendService` |
-| `IAccountService` | Scoped | `AccountService` |
-| `ITwoFactorAccountService` | Scoped | `TwoFactorAccountService` |
-| `MainViewModel` | Transient | `MainViewModel` |
-| `MainWindow` | Transient | `MainWindow` |
-| `TwoFactorViewModel` | Transient | `TwoFactorViewModel` |
-| `AddTwoFactorViewModel` | Transient | `AddTwoFactorViewModel` |
+- **Singleton**: DbContextFactory, Logger, KeyProtector, CredentialEncryption, PasswordAuth, OAuth, HttpClient, AutoDiscovery, ImapConnection, SmtpConnection, ImapConnectionPool, TwoFactorCodeService, SyncManager
+- **Scoped**: DbContext, EmailSyncService, EmailSendService, AccountService, TwoFactorAccountService
+- **Transient**: MainViewModel, AccountListViewModel, AddAccountViewModel, ComposeViewModel, TwoFactorViewModel, AddTwoFactorViewModel, MainWindow
 
-**Shutdown** (`OnExit`): Stop SyncManager → Release pool → Flush Serilog
+**Shutdown**: Stop SyncManager → Release pool → Flush Serilog
 
 ---
 
 ## Styles — `Resources/Styles.xaml`
 
-- **4 converters**: BoolToFontWeight, BoolToVisibility, NullToVisibility, FileSize
-- **9 color brushes**: PrimaryBrush (#0078D4), SidebarBrush, SeparatorBrush, UnreadBrush, ReadBrush, SelectedItemBrush, ErrorBrush, etc.
-- **Button styles**: PrimaryButton (blue), ToolbarButton (transparent)
-- **Control styles**: FolderTreeItem, EmailListItem, StatusBarText
+4 converters, 9 color brushes (PrimaryBrush #0078D4, etc.), PrimaryButton/ToolbarButton styles, FolderTreeItem/EmailListItem/StatusBarText styles
 
 ---
 
-## MainWindow — `MainWindow.xaml` + `MainWindow.xaml.cs`
+## MainWindow
 
-**3-pane layout**:
 ```
 ┌──────────────────────────────────────────────────┐
 │  Toolbar: Unified Inbox | New | Reply | Forward  │
@@ -73,169 +39,117 @@
 │               ├──────────────────────────────────┤
 │  • Account A  │  Email Preview (WebView2 HTML)   │
 │    └ Inbox(3) │                                  │
-│    └ Sent     │                                  │
 └───────────────┴──────────────────────────────────┘
 ```
 
-**WebView2**: Render HTML email body (fallback: `<pre>` for plaintext)
-- Security: disable scripts, disable context menu, block external navigation, block external resources
+**WebView2**: HTML body (fallback `<pre>` plaintext). Hardened (see `auth.md`)
 
-**Code-behind**:
-- `MainWindow_Loaded`: init WebView2 + load accounts (parallel)
-- `FolderTreeView_SelectedItemChanged` → `SelectFolderCommand`
-- `ViewModel_PropertyChanged` → watch `SelectedEmail` → update preview
-- `UpdateEmailPreview`: safe WebView2 HTML/text rendering
+**Code-behind**: `Loaded` → init WebView2 + load accounts. `FolderTreeView_SelectedItemChanged` → `SelectFolderCommand`. `SelectedEmail` change → `UpdateEmailPreview`
 
 ---
 
-## MainViewModel — `ViewModels/MainViewModel.cs`
+## MainViewModel
 
-**Key properties**:
-- `FolderTree`: `ObservableCollection<AccountFolderNode>` — account/folder hierarchy
-- `Emails`: `ObservableCollection<EmailMessage>` — current folder (≤200)
-- `SelectedEmail` / `SelectedFolder` / `StatusText` / `IsSyncing` / `Accounts`
+**Properties**: `FolderTree` (ObservableCollection<AccountFolderNode>), `Emails` (≤200), `SelectedEmail`, `SelectedFolder`, `StatusText`, `IsSyncing`, `Accounts`
 
-**Key commands**:
+**Commands**:
 | Command | Action |
 |---------|--------|
-| `LoadAccountsCommand` | Load all → sync folders → build tree → start background sync. Per-account folder sync is wrapped in try/catch so one account's IMAP failure doesn't block others |
+| `LoadAccountsCommand` | Load all → sync folders → build tree → start sync (per-account try/catch) |
 | `SelectFolderCommand` | Incremental sync → load ≤200 emails (no body) |
-| `ShowUnifiedInboxCommand` | Sync all Inboxes → merge display |
-| `MarkAsReadCommand` | Mark as read |
-| `DeleteMessageCommand` | Move to Trash |
-| `ComposeNewCommand` | Open compose window |
-| `Reply/ReplyAll/ForwardCommand` | Open compose for reply/forward |
-| `OpenAccountSettingsCommand` | Open account management |
+| `ShowUnifiedInboxCommand` | Sync all Inboxes → merge |
+| `MarkAsReadCommand` / `DeleteMessageCommand` | Read / Move to Trash |
+| `ComposeNewCommand` / `Reply/ReplyAll/ForwardCommand` | Open compose |
+| `OpenAccountSettingsCommand` | Account management |
 
-**Email selection flow**: `SelectedEmail` change → `LoadFullMessageAndMarkReadAsync()`:
-1. Query body from DB (if cached) → 2. If not cached, or if cached HTML contains unresolved `cid:` references (legacy data from before inline image resolution) → `FetchMessageBodyAsync()` from IMAP → 3. Fill BodyHtml/BodyText + Attachments → 4. Auto mark read
+**Email selection**: `SelectedEmail` → `LoadFullMessageAndMarkReadAsync()`: DB body (if cached) → if not cached or has unresolved `cid:` → IMAP fetch → fill body + attachments → mark read
 
-**New email event**: `OnNewEmailsReceived()` → UI thread → Toast notification → insert at list top
+**New email event**: `OnNewEmailsReceived()` → Dispatcher → Toast → insert at top
 
-**Nested class**: `AccountFolderNode : ObservableObject` — for TreeView binding
+**Nested**: `AccountFolderNode : ObservableObject` for TreeView
 
 ---
 
-## AddAccountWindow — `Views/AddAccountWindow.xaml` + `ViewModels/AddAccountViewModel.cs`
+## AddAccountWindow + AddAccountViewModel
 
-**5-step wizard**:
-| Step | Content |
-|------|---------|
-| 0 | Enter email address |
-| 1 | Auto-discovery in progress |
-| 2 | Choose auth (OAuth 2.0 / Password), show discovered server config |
-| 3 | Manual server config (IMAP/SMTP + SOCKS5 proxy) |
-| 4 | Complete |
+**5-step wizard**: 0: email → 1: discovery → 2: auth choice (OAuth/Password) → 3: manual config → 4: complete
 
-**Server config passthrough**: After discovery/manual entry, the ViewModel builds a `ServerConfiguration` from the UI fields and passes it as `manualConfig` to `AddAccountAsync`, skipping redundant auto-discovery on account creation. The `SelectedAuthType` is also passed explicitly so the user's auth choice is preserved (prevents auto-detection from overriding it).
+**Config passthrough**: Builds `ServerConfiguration` from UI fields → `manualConfig` param (skips re-discovery). `SelectedAuthType` passed explicitly.
 
-**OAuth availability tracking**: `UpdateOAuthAvailability(imapHost)` checks `FindProviderByHost` and sets `IsOAuthAvailable`, `IsOAuthSelected`, and `SelectedAuthType`. Called from two places: `OnImapHostChanged` (fires when user edits IMAP host on manual config screen) and after auto-discovery completes (explicit re-check in case the discovered host differs from what triggered the property change).
+**OAuth availability**: `UpdateOAuthAvailability(imapHost)` via `FindProviderByHost`. Called on `OnImapHostChanged` and after discovery.
 
-**OAuth flow** (`RunOAuthFlowAsync`):
-1. `FindProviderByHost()` → 2. `PrepareAuthorization()` → 3. Open browser → 4. `WaitForAuthorizationCodeAsync()` → 5. `ExchangeCodeForTokenAsync()` → 6. Store encrypted tokens
+**OAuth flow**: `FindProviderByHost` → `PrepareAuthorization` → browser → `WaitForAuthorizationCodeAsync` → `ExchangeCodeForTokenAsync` → encrypt tokens
 
 ---
 
-## ComposeWindow — `Views/ComposeWindow.xaml` + `ViewModels/ComposeViewModel.cs`
+## ComposeWindow + ComposeViewModel
 
-- Non-modal, 4 modes: `New` / `Reply` / `ReplyAll` / `Forward`
-- Sender dropdown (multi-account), attachment management
-- `SendCommand` → call `IEmailSendService` based on mode
-- `PrepareReply` → fill To/Cc, quote original
+Non-modal, 4 modes: New/Reply/ReplyAll/Forward. Sender dropdown, attachments. `SendCommand` → `IEmailSendService`. `PrepareReply` fills To/Cc + quote.
 
 ---
 
-## AccountListWindow — `Views/AccountListWindow.xaml` + `ViewModels/AccountListViewModel.cs`
+## AccountListWindow + AccountListViewModel
 
-- Modal dialog, account list (email, host, auth type, enabled status)
-- Operations: add, edit, delete (with confirmation)
+Modal. Account list (email, host, auth, enabled). Add/edit/delete with confirmation.
 
 ---
 
-## TwoFactorWindow — `Views/TwoFactorWindow.xaml` + `ViewModels/TwoFactorViewModel.cs`
+## TwoFactorWindow + TwoFactorViewModel
 
-**Non-modal window** opened from MainWindow toolbar ("2FA" button → `OpenTwoFactorCommand`).
+Non-modal, opened from toolbar "2FA" button.
 
-**Layout**: `DockPanel` with ListBox (account list) and bottom button bar (Add/Edit/Delete + status text).
+**Layout**: DockPanel with ListBox (Issuer, Label, CurrentCode Consolas 28pt, ProgressBar) + button bar. Copy button per item via `RelativeSource AncestorType=ListBox`, `CommandParameter="{Binding}"`. Empty state via DataTrigger.
 
-**ListBox item template**: Each item shows Issuer, Label, CurrentCode (Consolas 28pt), ProgressBar with remaining seconds. Copy button per item bound to `CopyCodeCommand` via `RelativeSource AncestorType=ListBox`, with `CommandParameter="{Binding}"` passing the item's `TwoFactorDisplayItem` directly.
+**Code-behind**: `Loaded` → `InitializeAsync()`, `Closed` → `Dispose()`.
 
-**Empty state**: DataTrigger on `Items.Count == 0` replaces ListBox template with placeholder text.
+**TwoFactorViewModel** (`ObservableObject`, `IDisposable`): DispatcherTimer 1s. `InitializeAsync()` loads + starts. `Dispose()` stops timer.
 
-**Code-behind**: `Loaded` → `vm.InitializeAsync()`, `Closed` → `vm.Dispose()`.
-
-**TwoFactorViewModel** (`ObservableObject`, `IDisposable`):
-- Constructor: receives `ITwoFactorCodeService` + `ILogger`, creates `DispatcherTimer` (1s interval)
-- `InitializeAsync()`: loads accounts + starts timer
-- `Dispose()`: stops timer + unsubscribes tick handler
-
-**Key commands**:
+**Commands**:
 | Command | Action |
 |---------|--------|
-| `LoadAccountsCommand` | Create scope → `ITwoFactorAccountService.GetAllAsync()` → decrypt secrets → build `TwoFactorDisplayItem` collection |
-| `CopyCodeCommand` | Takes `TwoFactorDisplayItem?` parameter (via `CommandParameter`), falls back to `SelectedItem`. Copies `CurrentCode` (stripped spaces) to clipboard |
-| `AddAccountCommand` | Open `AddTwoFactorWindow` (modal) → reload on success |
-| `EditAccountCommand` | Open `AddTwoFactorWindow` with `LoadForEdit()` → reload on success |
-| `DeleteAccountCommand` | Confirmation dialog → `ITwoFactorAccountService.DeleteAsync()` → remove from list |
+| `LoadAccountsCommand` | Scope → `GetAllAsync()` → decrypt → build `TwoFactorDisplayItem` list |
+| `CopyCodeCommand` | `TwoFactorDisplayItem?` param or `SelectedItem` → clipboard (stripped spaces) |
+| `AddAccountCommand` | `AddTwoFactorWindow` modal → reload |
+| `EditAccountCommand` | `AddTwoFactorWindow` + `LoadForEdit()` → reload |
+| `DeleteAccountCommand` | Confirm → `DeleteAsync()` → remove |
 
-**Scope-based service resolution**: `ITwoFactorAccountService` is Scoped, so each command creates a DI scope via `App.Services.CreateScope()` to resolve it (same pattern as other scoped services).
-
----
-
-## AddTwoFactorWindow — `Views/AddTwoFactorWindow.xaml` + `ViewModels/AddTwoFactorViewModel.cs`
-
-**Modal dialog** for adding or editing 2FA accounts. Title bound to `WindowTitle` (dynamic: "Add 2FA Account" / "Edit 2FA Account").
-
-**Two input modes** (add mode only, toggled by RadioButton):
-1. **Manual Input**: Issuer, Label, Secret (Base32), Advanced Settings (Algorithm ComboBox, Digits, Period)
-2. **URI Import**: Paste `otpauth://` URI → Parse button → auto-fills all fields
-
-**Edit mode**: Shows only Issuer and Label fields (secret is immutable). Activated via `LoadForEdit(TwoFactorAccount)`.
-
-**Code-behind**: `Loaded` → subscribe to `vm.CloseRequested` → set `DialogResult` + close window.
-
-**AddTwoFactorViewModel** (`ObservableObject`):
-
-**Key commands**:
-| Command | Action |
-|---------|--------|
-| `ParseUriCommand` | `ITwoFactorCodeService.ParseOtpAuthUri()` → populate fields |
-| `SaveCommand` | Create scope → add (manual or URI) or update → set `DialogResult = true` → `CloseRequested` |
-
-**CloseRequested pattern**: ViewModel exposes `event Action? CloseRequested`. On save success, fires event. Code-behind subscribes and sets `DialogResult` + calls `Close()`. Same pattern used for modal dialog result passing.
-
-**Validation**: Requires Issuer (always), Secret (add mode only). URI mode delegates validation to `AddFromUriAsync`.
+Each command creates DI scope for scoped `ITwoFactorAccountService`.
 
 ---
 
-## TwoFactorDisplayItem — `ViewModels/TwoFactorDisplayItem.cs`
+## AddTwoFactorWindow + AddTwoFactorViewModel
 
-**Display wrapper** around `TwoFactorAccount` for real-time TOTP display.
+Modal dialog. Title dynamic ("Add/Edit 2FA Account").
 
-**Properties** (`ObservableObject`):
-- `Account` — underlying `TwoFactorAccount` entity
-- `CurrentCode` — formatted TOTP code (e.g. "123 456" for 6-digit, "1234 5678" for 8-digit)
-- `RemainingSeconds` — seconds until code expires
-- `ProgressPercentage` — `RemainingSeconds / Period * 100` (drives ProgressBar)
+**Add mode**: Manual (Issuer, Label, Secret, Algorithm, Digits, Period) or URI import (`otpauth://` → Parse → auto-fill)
+**Edit mode**: Issuer + Label only (secret immutable). Via `LoadForEdit(TwoFactorAccount)`.
 
-**`UpdateCode()`**: Called every 1s by `TwoFactorViewModel`'s DispatcherTimer. Only regenerates code when period boundary is crossed (remaining went up) or on first call, to avoid unnecessary computation.
+**Code-behind**: `Loaded` → subscribe `CloseRequested` → `DialogResult` + close.
 
----
+**Commands**: `ParseUriCommand` (parse URI → fill fields), `SaveCommand` (add/update → `CloseRequested`)
 
-## Converters — `Converters/`
+**CloseRequested pattern**: VM fires `event Action? CloseRequested` → code-behind sets `DialogResult` + `Close()`.
 
-| Converter | Purpose |
-|-----------|---------|
-| `BoolToFontWeightConverter` | `!IsRead` → `Bold` |
-| `BoolToVisibilityConverter` | Bool → `Visible/Collapsed`, supports `Invert` |
-| `NullToVisibilityConverter` | Non-null → `Visible`, supports `Invert` |
-| `FileSizeConverter` | Bytes → "1.5 MB" / "256 KB" |
+**Validation**: Issuer required always, Secret required in add mode. URI delegates to `AddFromUriAsync`.
 
 ---
 
-## NotificationHelper — `ViewModels/NotificationHelper.cs`
+## TwoFactorDisplayItem
 
-- Static class, Windows Toast notifications
-- `Initialize()` — create NotifyIcon (system tray)
-- `ShowNewMailNotification(accountEmail, messageCount)` — 5s bubble
-- `Dispose()` — release resources
+Wrapper for real-time TOTP display (`ObservableObject`).
+
+**Properties**: `Account`, `CurrentCode` ("123 456" / "1234 5678"), `RemainingSeconds`, `ProgressPercentage` (remaining/period*100)
+
+**`UpdateCode()`**: Called 1s by timer. Regenerates only on period boundary (remaining went up) or first call.
+
+---
+
+## Converters
+
+`BoolToFontWeightConverter` (!IsRead→Bold), `BoolToVisibilityConverter` (supports Invert), `NullToVisibilityConverter` (supports Invert), `FileSizeConverter` (bytes→"1.5 MB")
+
+---
+
+## NotificationHelper
+
+Static. `Initialize()` → NotifyIcon. `ShowNewMailNotification(email, count)` → 5s bubble. `Dispose()`.

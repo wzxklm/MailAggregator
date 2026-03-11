@@ -1,169 +1,142 @@
 # Mail Services — Discovery, Connection, Sync, Send, Account, SyncManager
 
-## Auto-Discovery — `Services/Discovery/AutoDiscoveryService.cs`
+## Auto-Discovery — `AutoDiscoveryService.cs`
 
-6-level fallback to find IMAP/SMTP server config from email address:
+6-level fallback for IMAP/SMTP config:
 
-- **Level 1**: `https://autoconfig.{domain}/mail/config-v1.1.xml` (+ HTTP fallback)
-- **Level 2**: `https://{domain}/.well-known/autoconfig/mail/config-v1.1.xml` (+ HTTP fallback)
-- **Level 3**: `https://autoconfig.thunderbird.net/v1.1/{domain}` (Thunderbird ISPDB)
-- **Level 4**: DNS MX query → retry Level 1-3 with MX domain
-- **Level 5**: RFC 6186 SRV records (`_imaps._tcp`, `_imap._tcp`, `_submission._tcp`) — SMTP SRV query runs in parallel with IMAP queries
-- **Level 6**: null (UI prompts manual config)
-- **Parallel discovery**: Levels 1-3 (including HTTP fallback URLs) run in parallel via `Task.WhenAny` (Thunderbird-style `promiseFirstSuccessful`). First successful result cancels remaining requests via linked `CancellationTokenSource`
-- **HTTP fallback**: Levels 1-2 also attempt HTTP URLs because many enterprise/small ISP servers only serve autoconfig over HTTP
-- **XML parsing**: `ParseAutoconfigXml()` from Thunderbird-format XML. Extracts `<authentication>` element (e.g., `"OAuth2"`, `"password-cleartext"`, `"password-encrypted"`) into `ServerConfiguration.Authentication` property
-- **DNS resolution**: Uses `DnsClient.NET` library (`ILookupClient`) for MX and SRV record queries. Constructor accepts `ILookupClient` for test injection. DNS timeout configured via `LookupClientOptions.Timeout` (10s)
-- **MX domain extraction**: `ExtractBaseDomain()` handles ccSLDs (co.uk, com.au, etc.) via `TwoLevelTlds` set
-- **Timeout**: 10s per HTTP request, 10s per DNS query
+- **L1**: `https://autoconfig.{domain}/mail/config-v1.1.xml` (+ HTTP)
+- **L2**: `https://{domain}/.well-known/autoconfig/mail/config-v1.1.xml` (+ HTTP)
+- **L3**: `https://autoconfig.thunderbird.net/v1.1/{domain}`
+- **L4**: DNS MX → retry L1-3 with MX domain
+- **L5**: SRV records (`_imaps._tcp`, `_imap._tcp`, `_submission._tcp`) — SMTP SRV parallel with IMAP
+- **L6**: null (manual config)
+- **Parallel**: L1-3 (incl HTTP fallbacks) via `Task.WhenAny`. First success cancels rest via `CancellationTokenSource`
+- **XML parsing**: `ParseAutoconfigXml()` — Thunderbird format. Extracts `<authentication>` into `ServerConfiguration.Authentication`
+- **DNS**: `ILookupClient` (DnsClient.NET, injectable). `ExtractBaseDomain()` handles ccSLDs via `TwoLevelTlds`
+- **Timeout**: 10s HTTP, 10s DNS
 - **Interface**: `IAutoDiscoveryService` — `DiscoverAsync(emailAddress)`
 
 ---
 
-## Connection Helper — `Services/Mail/MailConnectionHelper.cs`
+## Connection Helper — `MailConnectionHelper.cs`
 
-Shared logic for all IMAP/SMTP connections (internal static).
+Internal static, shared by IMAP/SMTP.
 
-- **Constants**: `MaxRetries = 3`, `InitialRetryDelay = 1s`, `TokenRefreshGracePeriod = 60s`
-- `GetSecureSocketOptions(encryption)` — map `ConnectionEncryptionType` → MailKit `SecureSocketOptions`
-- `ConfigureProxy(client, account, protocol, logger)` — SOCKS5 proxy setup
-- `AuthenticateAsync(client, account, ...)` — unified auth:
-  - OAuth2: check token expiry (60s grace) → refresh if needed → OAuth2 SASL
-  - Password: decrypt → plaintext auth
-- **Token refresh concurrency protection**: Per-account `SemaphoreSlim` (stored in `ConcurrentDictionary<int, SemaphoreSlim>`) prevents IMAP and SMTP from refreshing the same account's token simultaneously. Uses double-check pattern: re-checks expiry after acquiring lock in case another caller already refreshed
-- `RemoveTokenRefreshLock(accountId)` — disposes and removes the semaphore for a deleted account (called by `AccountService.DeleteAccountAsync` to prevent memory leaks)
-- `IsNonTransientAuthError(ImapCommandException)` — detects non-transient auth/access errors in IMAP NO responses by checking for "Unsafe Login", "Authentication", "LOGIN", or "not connected" keywords (the last catches Microsoft's "User is authenticated but not connected" error). Used by `SyncManager` catch block, `EmailSyncService` folder-open error handling, and `ImapConnectionService` retry loop to stop immediately rather than retrying or incorrectly deleting the folder
+- **Constants**: `MaxRetries=3`, `InitialRetryDelay=1s`, `TokenRefreshGracePeriod=60s`
+- `GetSecureSocketOptions(encryption)` — enum → MailKit `SecureSocketOptions`
+- `ConfigureProxy(client, account, protocol, logger)` — SOCKS5
+- `AuthenticateAsync(client, account, ...)` — OAuth2 (expiry check → refresh → SASL) or Password (decrypt → auth)
+- **Token refresh lock**: Per-account `SemaphoreSlim` in `ConcurrentDictionary` + double-check pattern. `RemoveTokenRefreshLock(accountId)` on account delete
+- `IsNonTransientAuthError(ImapCommandException)` — checks for "Unsafe Login", "Authentication", "LOGIN", "not connected". Used by SyncManager, EmailSyncService, ImapConnectionService to stop immediately
 
-## IMAP Connection — `Services/Mail/ImapConnectionService.cs`
+## IMAP Connection — `ImapConnectionService.cs`
 
-- 3 retries + exponential backoff
-- SOCKS5 proxy support
-- **IMAP ID (RFC 2971)**: After connecting, if the server advertises `ImapCapabilities.Id`, sends an `IdentifyAsync` with client name/version before authentication. Required by providers like 163.com (Coremail) that reject login without client identification ("Unsafe Login"). Failure is non-fatal (logged and swallowed)
-- **Non-transient auth error bypass**: Catches `ImapCommandException` matching `IsNonTransientAuthError` inside the retry loop and rethrows immediately, avoiding wasted retry attempts on errors that will never succeed (e.g., Microsoft's "User is authenticated but not connected")
-- OAuth token refresh + persist refreshed tokens (`PersistRefreshedTokenAsync`)
+- 3 retries + exponential backoff, SOCKS5 proxy
+- **IMAP ID (RFC 2971)**: `IdentifyAsync` before auth if `ImapCapabilities.Id` present. Non-fatal on failure
+- **Non-transient auth bypass**: Rethrows `IsNonTransientAuthError` immediately (no retry)
+- OAuth refresh + `PersistRefreshedTokenAsync`
 - **Interface**: `IImapConnectionService` — `ConnectAsync(account)`
 
-## SMTP Connection — `Services/Mail/SmtpConnectionService.cs`
+## SMTP Connection — `SmtpConnectionService.cs`
 
-- Same pattern as IMAP (retry, proxy, OAuth refresh, persist)
-- **Interface**: `ISmtpConnectionService` — `ConnectAsync(account)`
+Same pattern as IMAP. **Interface**: `ISmtpConnectionService` — `ConnectAsync(account)`
 
-## Connection Pool — `Services/Mail/ImapConnectionPool.cs`
+## Connection Pool — `ImapConnectionPool.cs`
 
-Reuse IMAP connections to avoid repeated TCP+TLS+AUTH handshakes.
-
-- `ConcurrentDictionary<int, ConcurrentQueue<ImapClient>>` (per-account)
-- **Max connections**: 2 per account
-- **Atomic pool size tracking**: `_poolCounts` (`ConcurrentDictionary<int, int>`) tracks active connections per account via `AddOrUpdate` atomic increment/decrement, preventing concurrent return-to-pool from exceeding `MaxConnectionsPerAccount`
-- **Validation**: check `IsConnected && IsAuthenticated` before reuse
-- **Graceful degradation**: stale connections auto-released
-- **Background cleanup timer**: `Timer` fires every 5 minutes (`CleanupInterval`) to remove stale/zombie connections from all account queues. Iterates each queue, dequeues and re-enqueues live connections, disposes dead ones. Guards against `_disposed` to avoid running after pool disposal. Handles NAT/mobile networks that silently drop TCP connections
-- `GetConnectionAsync(account)` / `ReturnToPool(accountId, client)` / `RemoveAccount(accountId)`
+- `ConcurrentDictionary<int, ConcurrentQueue<ImapClient>>` per-account. Max 2 per account
+- **Atomic size tracking**: `_poolCounts` via `AddOrUpdate`
+- **Validation**: `IsConnected && IsAuthenticated` before reuse; stale auto-released
+- **Cleanup timer**: 5min `Timer`, dequeue/re-enqueue live, dispose dead. Guards `_disposed`
+- `GetConnectionAsync` / `ReturnToPool` / `RemoveAccount`
 - **Interface**: `IImapConnectionPool`
 
 ### `PooledImapConnection.cs`
-- `Dispose()` returns connection to pool (not close)
+`Dispose()` returns to pool (not close)
 
 ---
 
-## Email Sync — `Services/Mail/EmailSyncService.cs`
+## Email Sync — `EmailSyncService.cs`
 
-Uses `IDbContextFactory<MailAggregatorDbContext>` — each operation creates its own scoped DbContext for thread safety (background sync runs on separate threads from UI).
+Uses `IDbContextFactory` — scoped DbContext per operation (thread safety).
 
 ### Folder sync (`SyncFoldersCoreAsync`)
-- Get IMAP folder list → identify SPECIAL-USE attributes → sync to DB (add/update/delete)
+IMAP folder list → SPECIAL-USE mapping → DB sync (add/update/delete)
 
 ### Initial sync (`SyncInitialAsync`)
-- Search last 30 days
-- Fetch summaries (envelope, flags, BodyStructure, PreviewText)
-- **No full body** (lazy load)
-- Batch save every 50 messages
+Last 30 days, summaries only (no body), batch save every 50
 
 ### Incremental sync (`SyncIncrementalAsync`)
-- Check UIDVALIDITY (if changed → reset cache, re-sync)
-- Fetch new messages (UID > MaxUid)
-- Sync flags and detect deletions via `SyncFlagsAndDetectDeletionsAsync` (single IMAP FETCH for both)
-- **Folder update**: Uses `Attach` + mark individual properties (`MaxUid`, `MessageCount`, `UnreadCount`) as modified instead of `Update(folder)`, to avoid EF Core graph traversal cascading to `EmailMessage` entities via the `Messages` navigation property
+- Check UIDVALIDITY (changed → reset + re-sync via `SyncInitialCoreAsync`)
+- Fetch new (UID > MaxUid) + `SyncFlagsAndDetectDeletionsAsync`
+- Folder update via `Attach` + `IsModified` (avoids `Update()` cascade)
 
-### Flag sync & deletion detection (`SyncFlagsAndDetectDeletionsAsync`)
-- Single IMAP FETCH (UIDs + Flags) for all locally-known messages — server returns only UIDs that still exist
-- **Flag sync**: Updates `IsRead` (`\Seen`) and `IsFlagged` (`\Flagged`) properties when server flags differ from local
-- **Tracking-safe flag update**: Before attaching stub `EmailMessage` entities, builds a `Dictionary` from `ChangeTracker.Entries<EmailMessage>()`. If an entity is already tracked (e.g., just inserted by `FetchAndCacheMessagesAsync` in the same DbContext), updates the tracked entity directly instead of attaching a new stub — avoids `InvalidOperationException` from duplicate key tracking
-- **Deletion detection**: UIDs absent from server response are batch-deleted locally via `ExecuteDeleteAsync`
-- Replaces the former separate `SyncExistingMessageFlagsAsync` + `DetectDeletedMessagesAsync` methods
+### Flag sync & deletion (`SyncFlagsAndDetectDeletionsAsync`)
+- Single FETCH (UIDs + Flags) — server returns only existing UIDs
+- Updates `IsRead`/`IsFlagged` when different. Tracking-safe: builds dict from `ChangeTracker.Entries<EmailMessage>()` first
+- Missing UIDs → batch `ExecuteDeleteAsync`
 
 ### Message operations
-- `SetMessageReadAsync` — update `\Seen` flag
-- `DownloadAttachmentAsync` — download to disk
-- `MoveMessageAsync` — server-side move
-- `DeleteMessageAsync` — move to Trash
-- `FetchMessageBodyAsync` — lazy-fetch full body + attachment metadata
-- `ResolveInlineImages` (private static) — during body parsing, replaces `cid:` references in HTML with inline `data:` URIs from the MIME message's `BodyParts`. Finds `MimePart` entries with a `ContentId`, Base64-encodes the content, and substitutes `cid:{contentId}` with `data:{mimeType};base64,{data}`. Makes HTML self-contained so WebView2 can render embedded images without resolving Content-ID URIs
+- `SetMessageReadAsync` / `DownloadAttachmentAsync` / `MoveMessageAsync` / `DeleteMessageAsync` (→ Trash)
+- `FetchMessageBodyAsync` — lazy-fetch body + attachments
+- `ResolveInlineImages` (private) — replaces `cid:` refs with `data:` URIs from MIME `BodyParts`
 
 ### Concurrency
-- **Per-folder sync lock**: `ConcurrentDictionary<int, SemaphoreSlim>` (`_folderSyncLocks`) prevents concurrent `SyncInitialAsync`/`SyncIncrementalAsync` on the same folder. Lock acquired in public methods; internal `SyncInitialCoreAsync`/`SyncIncrementalCoreAsync` are lock-free (caller holds lock). UIDVALIDITY change path calls `SyncInitialCoreAsync(account, folder, client, ct)` directly to avoid deadlock and reuse the caller's IMAP connection
-- `SaveChangesSafeAsync` — handles both `DbUpdateConcurrencyException` (detach + retry) and `DbUpdateException` with SQLite error code 19 (UNIQUE constraint — detach Added entries + retry) as defense-in-depth
+- **Per-folder lock**: `_folderSyncLocks` (`ConcurrentDictionary<int, SemaphoreSlim>`). Public methods lock; `*CoreAsync` lock-free. UIDVALIDITY calls `SyncInitialCoreAsync` directly (avoids deadlock, reuses ImapClient)
+- **`SaveChangesSafeAsync`**: Handles `DbUpdateConcurrencyException` (detach+retry) and SQLite error 19 (UNIQUE, detach Added+retry)
 - **Interface**: `IEmailSyncService`
 
 ---
 
-## Email Send — `Services/Mail/EmailSendService.cs`
+## Email Send — `EmailSendService.cs`
 
 - `SendAsync(account, to, cc, bcc, subject, body, isHtml, attachmentPaths)` — new email
-- `ReplyAsync` / `ReplyAllAsync` — set In-Reply-To / References for threading
-- `ForwardAsync` — fetch original attachments from IMAP and include
-- **Sent folder**: After sending, `AppendToSentFolderAsync` saves a copy to the IMAP Sent folder via APPEND (most servers don't auto-save). Failures are logged but don't throw (email was already sent).
-- **Address validation**: `SetRecipients` uses `ParseAndValidateAddresses(addresses, fieldName)` which parses via `InternetAddressList.TryParse` then validates each `MailboxAddress` has `local@domain` format via `IsValidMailboxAddress`. Throws `ArgumentException` with field name and invalid addresses before reaching SMTP. Original `ParseAddresses` kept for `ReplyAllAsync` (parses stored addresses from original messages)
-- **Quote format**: HTML uses `<blockquote>`, plaintext uses `> ` prefix
-- **MIME**: Multipart MIME + Base64 attachment encoding
+- `ReplyAsync` / `ReplyAllAsync` — set In-Reply-To/References
+- `ForwardAsync` — fetch original attachments from IMAP
+- **Sent folder**: `AppendToSentFolderAsync` via APPEND. Failure logged, not thrown
+- **Address validation**: `ParseAndValidateAddresses` validates `local@domain` format. Throws `ArgumentException` before SMTP. Original `ParseAddresses` kept for `ReplyAllAsync`
+- **Quoting**: HTML `<blockquote>`, plaintext `> ` prefix
 - **Interface**: `IEmailSendService`
 
 ---
 
-## Account Management — `Services/AccountManagement/AccountService.cs`
+## Account Management — `AccountService.cs`
 
-- **AddAccountAsync(emailAddress, password?, manualConfig?, authType?)** — flow:
-  0. Check for duplicate email (+ unique DB index on `EmailAddress`) → 1. Use `manualConfig` if provided, otherwise AutoDiscovery → 2. Create Account entity → 3. Determine auth type: use caller's explicit `authType` if provided, otherwise auto-detect from IMAP host via `FindProviderByHost` → 4. OAuth → set AuthType=OAuth2 / 5. Password → encrypt & store → 6. Validate IMAP (password only) → 7. Save to DB within explicit transaction (rollback on failure to prevent orphaned OAuth accounts)
-- **UpdateAccountAsync** — validates host/port (non-empty host, port 1-65535 for both IMAP and SMTP). Before calling `Update()`, detaches any existing tracked Account entity from the ChangeTracker to avoid "already being tracked" conflicts (same pattern as `DeleteAccountAsync`). Saves to DB, then restarts sync if the account is currently syncing (stop → remove pool connections → start with new config)
-- **DeleteAccountAsync** — full cleanup: 1. Stop SyncManager for account → 2. Release ImapConnectionPool → 3. Remove token refresh lock (`MailConnectionHelper.RemoveTokenRefreshLock`) → 4. Delete attachment files from disk → 5. Detach the initially-loaded account entity and re-fetch fresh before deletion (the sync loop uses its own DbContext and may have modified the account row, e.g. OAuth token refresh, causing stale tracking state → `DbUpdateConcurrencyException`) → 6. Cascade delete DB entities (account + folders + messages + attachments). If re-fetch returns null the account was already deleted; method returns early
-- **GetAllAccountsAsync** / **GetAccountByIdAsync** (both use `AsNoTracking` for consistency)
-- **ValidateConnectionAsync** — test IMAP connection
-- **Dependencies**: Injects `ISyncManager` and `IImapConnectionPool` for deletion cleanup
+- **AddAccountAsync(emailAddress, password?, manualConfig?, authType?)**: Duplicate check → `manualConfig` or AutoDiscovery → create entity → auth type (explicit or auto-detect via `FindProviderByHost`) → OAuth or Password → validate IMAP (password) → save in transaction
+- **UpdateAccountAsync**: Validate host/port → detach tracked entity → save → restart sync if active
+- **DeleteAccountAsync**: Stop sync → release pool → `RemoveTokenRefreshLock` → delete attachments → detach + re-fetch → cascade delete. Null re-fetch = already deleted
+- **GetAllAccountsAsync** / **GetAccountByIdAsync**: `AsNoTracking`
+- **ValidateConnectionAsync**: Test IMAP
+- **Deps**: `ISyncManager`, `IImapConnectionPool`
 - **Interface**: `IAccountService`
 
 ---
 
-## Background Sync — `Services/Sync/SyncManager.cs`
+## Background Sync — `SyncManager.cs`
 
-IMAP IDLE background sync orchestrator.
-
-- **Constants**: `IdleTimeout = 29min` (RFC 2177 < 30min), `InitialReconnectDelay = 1s`, `MaxReconnectDelay = 300s`, `PollingInterval = 2min`, `JitterFactor = 0.25`
-- **Concurrency**: `ConcurrentDictionary<int, (Task, CancellationTokenSource)>` per-account
-- **Watch loop** (`AccountSyncLoopAsync`):
-  1. Connect IMAP → 2. Sync folders → 3. Inbox incremental sync → 4. Open Inbox, check `ImapCapabilities.Idle`
-  5a. **IDLE path** (server supports IDLE): `IdleWaitAsync` enters IDLE, breaks on 29min timeout or server notification. If server rejects IDLE with BAD/NO (`ImapCommandException`), falls back to polling delay for that cycle
-  5b. **Polling path** (no IDLE capability): `Task.Delay(PollingInterval)` + `NoOpAsync` to refresh server state
-  6. Detect new messages → incremental sync → fire `NewEmailsReceived` → re-enter loop
-- **Exponential backoff with jitter**: `base = min(1s * 2^attempt, 300s)`, then randomized within +/-25% (`JitterFactor`) to prevent thundering herd. Minimum delay clamped to `InitialReconnectDelay`
-- **Network-aware reconnection**: Subscribes to `NetworkChange.NetworkAvailabilityChanged`. Uses `ManualResetEventSlim` (`_networkAvailable`): when network is down, sync loops wait on `_networkAvailable.Wait()` instead of consuming backoff cycles. When network restores, `_networkAvailable.Set()` unblocks all waiting loops and resets `reconnectAttempt = 0` for immediate reconnection
-- **Auth error handling**: non-transient auth errors → stop (no retry). `OAuthReauthenticationRequiredException` (invalid_grant) breaks the sync loop without retrying
-- **Graceful shutdown**: `StopAllAsync()` — cancel all tokens, await all tasks
-- **Disposal**: `Dispose()` unsubscribes from `NetworkChange` event and disposes `_networkAvailable`
-- **Event**: `NewEmailsReceived` (`EventHandler<NewEmailsEventArgs>`)
+- **Constants**: `IdleTimeout=29min`, `InitialReconnectDelay=1s`, `MaxReconnectDelay=300s`, `PollingInterval=2min`, `JitterFactor=0.25`
+- **Per-account**: `ConcurrentDictionary<int, (Task, CancellationTokenSource)>`
+- **Watch loop** (`AccountSyncLoopAsync`): Connect → sync folders → inbox incremental → open Inbox → IDLE or poll
+  - **IDLE path**: `IdleWaitAsync` (29min timeout). IDLE rejection → poll fallback
+  - **Poll path**: `Task.Delay(PollingInterval)` + `NoOpAsync`
+  - New messages → incremental sync → `NewEmailsReceived` event → loop
+- **Backoff**: `min(1s * 2^attempt, 300s)` ± 25% jitter, min clamped to 1s
+- **Network-aware**: `ManualResetEventSlim` — wait when down, unblock + reset attempt on restore
+- **Auth errors**: Non-transient → stop. `OAuthReauthenticationRequiredException` → break loop
+- **Shutdown**: `StopAllAsync()` cancels + awaits. `Dispose()` unsubscribes NetworkChange
 - **Interface**: `ISyncManager`
 
 ---
 
-## Concurrency & Thread Safety
+## Concurrency Summary
 
 | Component | Mechanism |
 |-----------|-----------|
-| IMAP pool | `ConcurrentDictionary` + `ConcurrentQueue` + `_poolCounts` atomic tracking + background `Timer` cleanup (5min) |
-| Token refresh | Per-account `SemaphoreSlim` with double-check pattern (prevents IMAP/SMTP concurrent refresh) |
-| SyncManager | `ConcurrentDictionary.GetOrAdd()` (atomic, no TOCTOU) |
-| DB operations | `IDbContextFactory` → scoped DbContext per operation (EmailSyncService, ImapConnectionService, SmtpConnectionService) |
-| Folder sync lock | Per-folder `SemaphoreSlim` in `EmailSyncService._folderSyncLocks` (prevents concurrent sync on same folder) |
-| EF Core save | `SaveChangesSafeAsync()` — detach + retry on concurrency conflict or UNIQUE constraint violation |
-| Batch save | Every 50 messages (avoid memory bloat) |
-| UI updates | `Dispatcher.Invoke()` for UI thread |
-| Folder switch | `CancellationToken` cancels previous load |
+| IMAP pool | `ConcurrentDictionary` + `ConcurrentQueue` + atomic `_poolCounts` + 5min cleanup timer |
+| Token refresh | Per-account `SemaphoreSlim` + double-check |
+| SyncManager | `ConcurrentDictionary.GetOrAdd()` (atomic) |
+| DB ops | `IDbContextFactory` → scoped DbContext per operation |
+| Folder sync | Per-folder `SemaphoreSlim` (`_folderSyncLocks`) |
+| EF save | `SaveChangesSafeAsync()` — detach+retry on conflict/UNIQUE |
+| Batch save | Every 50 messages |
+| UI | `Dispatcher.Invoke()` |
+| Folder switch | `CancellationToken` cancels previous |

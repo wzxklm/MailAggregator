@@ -1,164 +1,93 @@
 # Core Workflows
 
-## 1. Account Creation Flow
+## 1. Account Creation
 
 ```
-User enters email address
+Email → AddAccountViewModel.DiscoverAsync()
+    → AutoDiscoveryService (L1-L6 fallback)
+    → UpdateOAuthAvailability(imapHost) [also on manual host change]
+    → User saves (SelectedAuthType passed explicitly)
     │
-    ▼
-AddAccountViewModel.DiscoverAsync()
+    ├── OAuth: PrepareAuthorization → browser → WaitForCode → Exchange → encrypt tokens
+    └── Password: StorePassword → encrypt → ValidateIMAP
     │
-    ▼
-AutoDiscoveryService.DiscoverAsync(emailAddress)
-    ├─ Level 1: https://autoconfig.{domain}/mail/config-v1.1.xml
-    ├─ Level 2: https://{domain}/.well-known/autoconfig/mail/config-v1.1.xml
-    ├─ Level 3: https://autoconfig.thunderbird.net/v1.1/{domain}
-    ├─ Level 4: MX query → retry Level 1-3 with MX domain
-    └─ Level 5: null (manual config)
-    │
-    ▼
-UpdateOAuthAvailability(imapHost)
-    ├─ FindProviderByHost() found → UI shows "OAuth 2.0" option (pre-selected)
-    └─ Not found → UI shows "Password" option
-    │ (also re-checked on manual IMAP host change via OnImapHostChanged)
-    │
-    ▼ (user saves — SelectedAuthType passed explicitly to AddAccountAsync)
-    │
-    ├── OAuth path ─────────────────────────────┐
-    │   PrepareAuthorization() → auth URL + PKCE │
-    │   → Open browser                           │
-    │   → WaitForAuthorizationCodeAsync(port)    │
-    │   → ExchangeCodeForTokenAsync()            │
-    │   → Encrypt & store tokens                 │
-    │                                            │
-    ├── Password path ──────────────────────────┐│
-    │   PasswordAuthService.StorePassword()     ││
-    │   → AES-256-GCM encrypt                   ││
-    │   → ImapConnectionService.ConnectAsync()   ││
-    │   → Validate IMAP connection              ││
-    │                                           ││
-    ▼                                           ▼▼
-AccountService → DbContext.SaveChangesAsync()
-    │
-    ▼
-MainViewModel.LoadAccountsAsync()
-    → Sync folder list → Build folder tree → Start SyncManager
+    → AccountService.SaveChangesAsync() (transaction)
+    → MainViewModel.LoadAccountsAsync() → sync folders → build tree → start SyncManager
 ```
 
-## 2. Email Sync Flow
+## 2. Email Sync
 
 ```
 SyncManager.StartAccountSyncAsync(account)
+    → AccountSyncLoopAsync:
     │
-    ▼
-AccountSyncLoopAsync(account) — main loop
+    ├── Connect: Pool.GetConnectionAsync() → validate or create new
+    │   → proxy → AuthenticateAsync (OAuth/Password)
     │
-    ├── Connect ────────────────────────────────────┐
-    │   ImapConnectionPool.GetConnectionAsync()      │
-    │   → Check pool for valid connection            │
-    │   → If none: ImapConnectionService.ConnectAsync│
-    │     → Configure SOCKS5 proxy (if any)          │
-    │     → MailConnectionHelper.AuthenticateAsync()  │
-    │       → OAuth: check expiry → refresh → SASL   │
-    │       → Password: decrypt → plaintext auth     │
-    │   → Return PooledImapConnection                │
-    │                                                │
-    ├── Folder sync ────────────────────────────────┤
-    │   EmailSyncService.SyncFoldersAsync(account)   │
-    │                                                │
-    ├── Incremental sync ───────────────────────────┤
-    │   EmailSyncService.SyncIncrementalAsync(Inbox) │
-    │   → Check UIDVALIDITY → Fetch new → Detect     │
-    │     deleted → Batch save (every 50)            │
-    │                                                │
-    ├── IDLE phase ─────────────────────────────────┤
-    │   client.IdleAsync(29min timeout)              │
-    │   ├─ New mail → SyncIncrementalAsync()         │
-    │   │           → Fire NewEmailsReceived          │
-    │   │           → UI: insert + Toast notification │
-    │   └─ Timeout → Reopen Inbox → Continue IDLE    │
-    │                                                │
-    └── Error handling ─────────────────────────────┤
-        → Auth error (non-transient) → Stop          │
-        → Connection error → Exponential backoff     │
-          delay = min(1s × 2^attempt, 60s)           │
-        → Successful reconnect → Reset backoff       │
+    ├── SyncFoldersAsync(account)
+    │
+    ├── SyncIncrementalAsync(Inbox) → UIDVALIDITY → new msgs → deletions → batch save
+    │
+    ├── IDLE (29min) or Poll (2min + NoOp)
+    │   ├─ New mail → SyncIncremental → NewEmailsReceived → Toast
+    │   └─ Timeout → Reopen → Continue
+    │
+    └── Errors: auth (non-transient) → stop | connection → backoff min(1s×2^n, 300s)
 ```
 
-## 3. Email Viewing Flow
+## 3. Email Viewing
 
 ```
-User clicks folder in tree
+Folder click → SelectFolderAsync: cancel prev → SyncIncremental → load ≤200 (no body)
     │
-    ▼
-MainViewModel.SelectFolderAsync(node)
-    ├─ Cancel previous load (CancellationToken)
-    ├─ EmailSyncService.SyncIncrementalAsync(folder)
-    ├─ Load ≤200 emails from DB (date desc, projection query — no body)
-    └─ Update Emails collection
+Email click → LoadFullMessageAndMarkReadAsync:
+    DB body (cached?) → else IMAP fetch → cache → mark read → PropertyChanged
     │
-    ▼
-User clicks email in list
-    │
-    ▼
-LoadFullMessageAndMarkReadAsync()
-    ├─ Query full email from DB (BodyHtml/BodyText + Attachments)
-    ├─ If not cached → FetchMessageBodyAsync() from IMAP → cache to DB
-    ├─ If unread → SetMessageReadAsync() → IMAP \Seen flag
-    └─ Trigger PropertyChanged → MainWindow updates preview
-    │
-    ▼
-MainWindow.UpdateEmailPreview()
-    ├─ Has BodyHtml → WebView2.NavigateToString(html)
-    └─ Text only → WebView2.NavigateToString("<pre>" + text + "</pre>")
+UpdateEmailPreview: BodyHtml → WebView2 | text → <pre> wrapper
 ```
 
-## 4. Email Sending Flow
+## 4. Email Sending
 
 ```
-User clicks "New" / "Reply" / "Forward"
+New/Reply/Forward → ComposeViewModel
+    ├─ New: blank | Reply: To+quote | ReplyAll: To+Cc+quote | Forward: body+attachments
     │
-    ▼
-MainViewModel → Create ComposeViewModel
-    ├─ New: blank form
-    ├─ Reply: fill To, Subject("Re: ..."), quote body
-    ├─ ReplyAll: fill To+Cc, Subject, quote body
-    └─ Forward: fill Subject("Fwd: ..."), forward body
-    │
-    ▼
-ComposeViewModel.SendAsync()
-    ├─ Validate: SelectedSender ≠ null, To not empty
-    ├── New → EmailSendService.SendAsync()
-    │   → Build MimeMessage → SMTP connect → send → disconnect
-    ├── Reply/ReplyAll → EmailSendService.ReplyAsync()
-    │   → Set In-Reply-To/References → quote body → SMTP send
-    └── Forward → EmailSendService.ForwardAsync()
-        → Fetch original from IMAP (with attachments) → SMTP send
+SendAsync → validate → EmailSendService.Send/Reply/Forward
+    → MimeMessage → SMTP → AppendToSentFolder
 ```
 
 ## 5. IMAP Connection Lifecycle
 
 ```
-Request connection
+Pool.GetConnectionAsync(account)
+    ├─ Dequeue → validate (IsConnected && IsAuthenticated) → return or release
+    └─ Empty → ConnectAsync (3 retries) → proxy → auth → persist token
     │
-    ▼
-ImapConnectionPool.GetConnectionAsync(account)
-    ├─ Dequeue from pool → validate IsConnected && IsAuthenticated
-    │  → Valid → return PooledImapConnection
-    │  → Invalid → release, try next
-    └─ Pool empty → create new via ImapConnectionService.ConnectAsync()
-       → Retry loop (max 3, exponential backoff)
-       → ConfigureProxy() → ConnectAsync() → AuthenticateAsync()
-       → PersistRefreshedTokenAsync() (if OAuth refreshed)
+Use → PooledImapConnection.Dispose() → ReturnToPool (if valid + not full, else close)
+```
+
+## 6. 2FA Account Management
+
+```
+"2FA" button → TwoFactorWindow → InitializeAsync:
+    LoadAccountsAsync (GetAllAsync + decrypt secrets) + start 1s timer
     │
-    ▼
-Return PooledImapConnection
+    ├── Add: AddTwoFactorWindow → Manual (fields) or URI (parse) → AddAsync/AddFromUriAsync → reload
+    ├── Edit: AddTwoFactorWindow + LoadForEdit → UpdateAsync (issuer/label only) → reload
+    └── Delete: confirm → DeleteAsync → remove from list
+```
+
+## 7. 2FA Code Display
+
+```
+LoadAccountsAsync → GetAllAsync → decrypt each → TwoFactorDisplayItem(account, secret, codeService)
     │
-    ▼ (after use, Dispose)
+Timer 1s → UpdateCode() per item:
+    ├─ GetRemainingSeconds(period)
+    ├─ Regenerate if period boundary crossed or first call
+    ├─ GenerateCode → Base32 decode → Totp → compute → ZeroMemory
+    ├─ Format: 6-digit "123 456", 8-digit "1234 5678"
+    └─ Update RemainingSeconds + ProgressPercentage
     │
-    ▼
-PooledImapConnection.Dispose()
-    → ReturnToPool(accountId, client)
-      → Valid & pool not full → enqueue
-      → Otherwise → close & release
+CopyCodeCommand → strip spaces → Clipboard.SetText
 ```

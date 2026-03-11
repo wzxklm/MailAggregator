@@ -1,83 +1,54 @@
 # Auth Services & Security Architecture
 
-## Credential Encryption — `Services/Auth/CredentialEncryptionService.cs`
+## Credential Encryption — `CredentialEncryptionService.cs`
 
-All passwords and tokens must be encrypted before storage.
-
-- **Scheme**: AES-256-GCM (authenticated encryption, tamper-proof)
-- **Format**: `Base64(nonce[12B] + ciphertext[NB] + tag[16B])`
-- **Key mgmt**: Random 256-bit key, protected via `IKeyProtector`, persisted to file
+- **Scheme**: AES-256-GCM → `Base64(nonce[12B] + ciphertext + tag[16B])`
+- **Key**: Random 256-bit, protected via `IKeyProtector`, persisted to file
 - **Safety**: Memory zeroed after encrypt/decrypt
 - **Interface**: `ICredentialEncryptionService` — `Encrypt(plaintext)` / `Decrypt(ciphertext)`
 
 ## Key Protection
 
-### `DpapiKeyProtector.cs` — Windows DPAPI
-- `ProtectedData.Protect/Unprotect` (`DataProtectionScope.CurrentUser`)
-- Windows only: `[SupportedOSPlatform("windows")]`
+- **`DpapiKeyProtector.cs`**: Windows DPAPI (`CurrentUser` scope), `[SupportedOSPlatform("windows")]`
+- **`DevKeyProtector.cs`**: Passthrough (insecure), Linux dev/test only
 
-### `DevKeyProtector.cs` — Dev passthrough (insecure)
-- No encryption, Linux dev/test only
+## Password Auth — `PasswordAuthService.cs`
 
-## Password Auth — `Services/Auth/PasswordAuthService.cs`
-
-- `StorePassword(account, plainPassword)` — encrypt + store to `Account.EncryptedPassword`, set `AuthType = Password`
-- `RetrievePassword(account)` — decrypt to plaintext
+- `StorePassword(account, plainPassword)` → encrypt + store, set `AuthType = Password`
+- `RetrievePassword(account)` → decrypt
 - `HasStoredPassword(account)` / `ClearPassword(account)`
 - **Interface**: `IPasswordAuthService`
 
-## OAuth 2.0 PKCE — `Services/Auth/OAuthService.cs`
+## OAuth 2.0 PKCE — `OAuthService.cs`
 
-Authorization Code + PKCE flow.
-
-- **Provider mgmt**: Loads from `oauth-providers.json`
-- `FindProviderByHost(serverHost)` — match OAuth provider by IMAP/SMTP hostname
-- `PrepareAuthorization(provider, loginHint?)` — generate auth URL, PKCE code_verifier, local port, redirect_uri
-  - **CSRF protection**: Generates random `state` parameter (RFC 6749 Section 10.12), validated on callback
-  - **TOCTOU-safe port**: `StartListenerOnFreePort()` atomically binds HttpListener with retry loop; `CleanupPendingListeners()` disposes orphaned listeners from abandoned flows
-  - Pre-started listeners stored in `ConcurrentDictionary<int, (HttpListener, string State)>`
-- `WaitForAuthorizationCodeAsync(port)` — retrieves pre-started HttpListener, validates `state` match, extracts code
-  - **Cancellation handling**: Catches both `ObjectDisposedException` and `HttpListenerException` during cancellation (via pattern-matching `catch (Exception ex) when ((ex is ObjectDisposedException or HttpListenerException) && cancellationToken.IsCancellationRequested)`) and converts them to `OperationCanceledException`. `listener.Stop()` triggered by cancellation token can raise either exception type depending on timing
-- `ExchangeCodeForTokenAsync(provider, code, verifier, redirectUri)` — exchange code for tokens
-- `RefreshTokenAsync(provider, encryptedRefreshToken)` — refresh expired tokens (60s grace period)
-- **PKCE**: 128-char random code_verifier, S256 code_challenge (`Base64Url(SHA256(verifier))`)
-- **Security**: Tokens encrypted before return/storage
-- **Scope validation**: `ParseTokenResponse(responseBody, provider)` parses granted scopes from the `scope` field (space-delimited per RFC 6749 Section 3.3) and logs a warning if the server returned fewer scopes than requested (common with Microsoft omitting `offline_access`). Granted scopes stored in `OAuthTokenResult.GrantedScopes`. The `provider` parameter is required (not optional) so scope comparison is always available
-- **invalid_grant detection**: When a token exchange or refresh returns `invalid_grant` (token revoked/expired), `OAuthService` throws `OAuthReauthenticationRequiredException` instead of a generic `HttpRequestException`. Callers (e.g., `SyncManager`) catch this to stop sync gracefully and signal the user to re-authenticate
+- **Providers**: Loaded from `oauth-providers.json`
+- `FindProviderByHost(serverHost)` — match provider by IMAP/SMTP host
+- `PrepareAuthorization(provider, loginHint?)` — auth URL + PKCE + local port + redirect_uri
+  - Random `state` for CSRF (RFC 6749 Section 10.12), validated on callback
+  - `StartListenerOnFreePort()` atomically binds HttpListener (TOCTOU-safe); `CleanupPendingListeners()` disposes orphaned listeners
+  - Pre-started listeners in `ConcurrentDictionary<int, (HttpListener, string State)>`
+- `WaitForAuthorizationCodeAsync(port)` — validate state, extract code. Cancellation catches both `ObjectDisposedException` and `HttpListenerException` → converts to `OperationCanceledException`
+- `ExchangeCodeForTokenAsync(provider, code, verifier, redirectUri)` — code → tokens
+- `RefreshTokenAsync(provider, encryptedRefreshToken)` — refresh (60s grace)
+- **PKCE**: 128-char verifier, S256 challenge (`Base64Url(SHA256(verifier))`)
+- **Tokens encrypted** before return/storage
+- **Scope validation**: `ParseTokenResponse` parses granted scopes, logs warning if fewer than requested. `GrantedScopes` stored in result. `provider` required (not optional)
+- **invalid_grant**: Throws `OAuthReauthenticationRequiredException` → callers stop sync, signal re-auth
 - **Interface**: `IOAuthService`
 
 ### `OAuthReauthenticationRequiredException.cs`
-
-Custom exception thrown when OAuth token refresh fails with `invalid_grant`. Signals that the refresh token is revoked or expired and the user must complete a full re-authorization flow.
-
-- Thrown by `OAuthService` in `HandleTokenResponse` when response body contains `invalid_grant`
-- Caught by `SyncManager.AccountSyncLoopAsync` to stop sync without retrying (non-transient auth failure)
+Thrown by `HandleTokenResponse` on `invalid_grant`. Caught by `SyncManager.AccountSyncLoopAsync` — stops sync without retry.
 
 ---
 
-## Security Architecture
+## Security Flows
 
-### Credential encryption flow
 ```
-Plaintext password/token
-    → CredentialEncryptionService.Encrypt()
-    → Generate 12B random nonce
-    → AES-256-GCM encrypt
-    → Output: Base64(nonce + ciphertext + tag)
-    → Zero memory
-    → Store to SQLite
+Encrypt: plaintext → 12B nonce → AES-256-GCM → Base64(nonce+cipher+tag) → zero memory → SQLite
 ```
 
-### Key protection flow
 ```
-256-bit random AES key (first-time generation, FileMode.CreateNew)
-    ├─ Windows: DpapiKeyProtector → CurrentUser scope
-    └─ Dev: DevKeyProtector → passthrough (insecure)
-    → Persisted to %AppData%\MailAggregator\encryption.key
+Key: 256-bit random (FileMode.CreateNew) → DpapiKeyProtector/DevKeyProtector → %AppData%\MailAggregator\encryption.key
 ```
 
-### WebView2 security
-- `IsScriptEnabled = false`
-- `AreDefaultContextMenusEnabled = false`
-- Block all navigation to external links
-- Block external resource loading (anti-tracking)
+**WebView2**: No scripts, no context menu, block external nav + resource loading

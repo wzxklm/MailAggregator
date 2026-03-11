@@ -1,75 +1,71 @@
-# Core Data — Models & Data Access Layer
+# Core Data — Models & Data Access
 
 ## Project Config
 
-**File**: `src/MailAggregator.Core/MailAggregator.Core.csproj`
-- TargetFramework: `net8.0` (cross-platform)
-- Key NuGet:
-  - **MailKit 4.15.1** — IMAP/SMTP
-  - **Microsoft.EntityFrameworkCore.Sqlite 8.x** — SQLite ORM
-  - **Serilog 4.3.1** — Structured logging
-  - **System.Security.Cryptography.ProtectedData 10.0.3** — DPAPI
-- `InternalsVisibleTo: MailAggregator.Tests`
-- `oauth-providers.json` copied to output
+**`MailAggregator.Core.csproj`**: `net8.0`, `InternalsVisibleTo: MailAggregator.Tests`
+- NuGet: MailKit 4.15.1, EF Core SQLite 8.x, Otp.NET 1.4.0, DnsClient 1.8.0, Serilog 4.3.1, ProtectedData 10.0.3
 
-**File**: `src/MailAggregator.Core/oauth-providers.json`
-- 5 OAuth providers: Gmail, Microsoft, Yahoo, AOL, Fastmail
-- Each: `name`, `serverHosts[]`, `clientId`, `clientSecret`(optional), `authorizationEndpoint`, `tokenEndpoint`, `redirectionEndpoint`(optional), `scopes[]`, `usePKCE`, `additionalAuthParams`(optional)
+**`oauth-providers.json`**: 5 providers (Gmail, Microsoft, Yahoo, AOL, Fastmail)
+- Per provider: `name`, `serverHosts[]`, `clientId`, `clientSecret`?, `authorizationEndpoint`, `tokenEndpoint`, `redirectionEndpoint`?, `scopes[]`, `usePKCE`, `additionalAuthParams`?
 
 ---
 
 ## Data Models — `Models/`
 
-### `Account.cs` — Email account entity
+### `Account.cs`
 - **Connection**: `ImapHost/Port/Encryption`, `SmtpHost/Port/Encryption`
-- **Auth**: `AuthType` (Password/OAuth2), `EncryptedPassword`, `EncryptedAccessToken`, `EncryptedRefreshToken`, `OAuthTokenExpiry`
+- **Auth**: `AuthType`, `EncryptedPassword`, `EncryptedAccessToken`, `EncryptedRefreshToken`, `OAuthTokenExpiry`
 - **Proxy**: `ProxyHost`, `ProxyPort` (SOCKS5)
-- **Status**: `IsEnabled`, `CreatedAt`, `UpdatedAt`
-- **Navigation**: `Folders` (1:N), `Messages` (1:N)
+- **Meta**: `IsEnabled`, `CreatedAt`, `UpdatedAt`
+- **Nav**: `Folders` (1:N), `Messages` (1:N)
 
-### `MailFolder.cs` — IMAP folder entity
-- `AccountId`, `Name`, `FullName`
-- `SpecialUse` (Inbox/Sent/Drafts/Trash/Junk/Archive/None)
-- `UidValidity`, `MaxUid` (incremental sync markers)
-- `MessageCount`, `UnreadCount`
+### `MailFolder.cs`
+`AccountId`, `Name`, `FullName`, `SpecialUse`, `UidValidity`, `MaxUid`, `MessageCount`, `UnreadCount`
 
-### `EmailMessage.cs` — Email entity
-- **Headers**: `MessageId`, `InReplyTo`, `References` (threading)
+### `EmailMessage.cs`
+- **Headers**: `MessageId`, `InReplyTo`, `References`
 - **Addresses**: `FromAddress`, `FromName`, `ToAddresses`, `CcAddresses`, `BccAddresses`
 - **Content**: `Subject`, `PreviewText`, `BodyText`, `BodyHtml`
-- **Status**: `IsRead`, `HasAttachments`, `Uid` (IMAP UID)
-- **Navigation**: `Attachments` (1:N)
+- **Status**: `IsRead`, `HasAttachments`, `Uid`
+- **Nav**: `Attachments` (1:N)
 
-### `EmailAttachment.cs` — Attachment metadata
-- `FileName`, `ContentType`, `Size`
-- `LocalPath` (local cache), `ContentId` (inline images)
+### `EmailAttachment.cs`
+`FileName`, `ContentType`, `Size`, `LocalPath`, `ContentId`
 
-### `ServerConfiguration.cs` — Auto-discovered server config
-- IMAP/SMTP `Host`, `Port`, `Encryption`
+### `ServerConfiguration.cs`
+IMAP/SMTP `Host`, `Port`, `Encryption`
 
-### `OAuthProviderConfig.cs` — OAuth provider config
-- `Name`, `ServerHosts[]`, `ClientId`, `ClientSecret`, `AuthorizationEndpoint`, `TokenEndpoint`
-- `Scopes[]`, `UsePKCE` (per-provider), `RedirectionEndpoint`, `AdditionalAuthParams`
+### `OAuthProviderConfig.cs`
+`Name`, `ServerHosts[]`, `ClientId`, `ClientSecret`, `AuthorizationEndpoint`, `TokenEndpoint`, `Scopes[]`, `UsePKCE`, `RedirectionEndpoint`, `AdditionalAuthParams`
 
-### `OAuthTokenResult.cs` — Token response
-- `AccessToken`, `RefreshToken`, `ExpiresAt`
+### `OAuthTokenResult.cs`
+`AccessToken`, `RefreshToken`, `ExpiresAt`
 
 ### Enums
-- `AuthType.cs` — `Password` / `OAuth2`
-- `ConnectionEncryptionType.cs` — `None` / `Ssl` / `StartTls`
-- `SpecialFolderType.cs` — `None` / `Inbox` / `Sent` / `Drafts` / `Trash` / `Junk` / `Archive`
+- `AuthType` — `Password` / `OAuth2`
+- `ConnectionEncryptionType` — `None` / `Ssl` / `StartTls`
+- `OtpAlgorithm` — `Sha1` (default) / `Sha256` / `Sha512`
+- `SpecialFolderType` — `None` / `Inbox` / `Sent` / `Drafts` / `Trash` / `Junk` / `Archive`
+
+### `TwoFactorAccount.cs`
+- `Id` (PK), `Issuer` (required, max 256), `Label` (required, max 256)
+- `EncryptedSecret` — encrypted via `ICredentialEncryptionService`
+- `Algorithm` (default: Sha1), `Digits` (default: 6), `Period` (default: 30s)
+- `CreatedAt`, `UpdatedAt` — auto-stamped by `StampTimestamps()`
+- **Standalone**: No FK to `Account`
 
 ---
 
 ## Data Access — `Data/`
 
-### `MailAggregatorDbContext.cs` — EF Core DbContext
-- **DbSet**: `Accounts`, `Folders`, `Messages`, `Attachments`
-- **Type conversion**: Custom `DateTimeOffsetToLongConverter` → UTC ticks (SQLite doesn't support DateTimeOffset ORDER BY/WHERE)
-- **Auto timestamps**: `CreatedAt`/`UpdatedAt` (Account), `CachedAt` (EmailMessage)
+### `MailAggregatorDbContext.cs`
+- **DbSets**: `Accounts`, `Folders`, `Messages`, `Attachments`, `TwoFactorAccounts` (expression-bodied `Set<TwoFactorAccount>()`)
+- **Type conversion**: `DateTimeOffsetToLongConverter` → UTC ticks (SQLite ORDER BY/WHERE compat)
+- **`StampTimestamps()`**: Insert → `CreatedAt`+`UpdatedAt` (Account, TwoFactorAccount), `CachedAt` (EmailMessage). Modify → `UpdatedAt`
 - **Cascade delete**: Account → Folder → Message → Attachment
-- **Unique indexes**: `EmailAddress` for Account, `(AccountId, FullName)` for MailFolder, `(FolderId, Uid)` for EmailMessage
-- **Key methods**: `OnModelCreating()`, `SaveChangesAsync()` (auto timestamps)
+- **Unique indexes**: `EmailAddress` (Account), `(AccountId, FullName)` (MailFolder), `(FolderId, Uid)` (EmailMessage)
+- **TwoFactorAccount config**: PK `Id`, required `Issuer`/`Label` (max 256), required `EncryptedSecret`
 
 ### `DatabaseInitializer.cs`
-- `InitializeAsync()` — calls `EnsureCreatedAsync()`
+- `InitializeAsync()`: `EnsureCreatedAsync()` + explicit `CREATE TABLE IF NOT EXISTS TwoFactorAccounts` for existing DBs
+- Schema: `Id` INTEGER PK AUTOINCREMENT, `Issuer`/`Label`/`EncryptedSecret` TEXT NOT NULL, `Algorithm` INTEGER DEFAULT 0, `Digits` INTEGER DEFAULT 6, `Period` INTEGER DEFAULT 30, `CreatedAt`/`UpdatedAt` INTEGER DEFAULT 0
