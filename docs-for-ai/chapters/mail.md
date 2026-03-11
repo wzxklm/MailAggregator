@@ -119,7 +119,7 @@ Last 30 days, summaries only (no body), batch save every 50
 - **Per-account**: `ConcurrentDictionary<int, (Task, CancellationTokenSource)>`
 - **Watch loop** (`AccountSyncLoopAsync`): Connect → sync folders → inbox incremental (fires `NewEmailsReceived` if new messages found) → open Inbox → IDLE or poll
   - **Per-account IDLE toggle**: `account.UseIdle` (default true). When false, skips IDLE entirely and uses polling regardless of server capability. Toggled via Account Management UI
-  - **IDLE path**: `IdleWaitAsync` (29min timeout, returns `bool`). Tracks consecutive IDLE failures; 2 failures → permanently sets `supportsIdle=false` for the connection session
+  - **IDLE path**: `IdleWaitAsync` (29min timeout, returns `bool`). Subscribes to `imapInbox.CountChanged` to cancel the done token immediately when the server pushes EXISTS (new mail), so `IdleAsync` returns within seconds instead of waiting for the full timeout. Tracks consecutive IDLE failures; 2 failures → permanently sets `supportsIdle=false` for the connection session
   - **Poll path**: `Task.Delay(PollingInterval)`
   - **STATUS after every cycle**: `imapInbox.StatusAsync(StatusItems.Count)` always sent (both IDLE and polling) to refresh folder state and reset server-side idle timer. Uses STATUS instead of NOOP because some servers (e.g. 163.com) treat NOOP-only sessions as idle and auto-logout. Also provides authoritative message count for servers that don't reliably push EXISTS (e.g. QQ Mail)
   - New messages → incremental sync → `NewEmailsReceived` event → loop

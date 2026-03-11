@@ -265,7 +265,7 @@ public class SyncManager : ISyncManager, IDisposable
                 {
                     if (supportsIdle)
                     {
-                        var idleOk = await IdleWaitAsync(client, account, cancellationToken);
+                        var idleOk = await IdleWaitAsync(client, imapInbox, account, cancellationToken);
                         if (!idleOk)
                         {
                             idleFailures++;
@@ -404,13 +404,18 @@ public class SyncManager : ISyncManager, IDisposable
     /// Executes a single IDLE wait cycle. Returns false if the server rejected the
     /// IDLE command (BAD/NO response), true otherwise.
     /// </summary>
-    private async Task<bool> IdleWaitAsync(ImapClient client, LocalAccount account, CancellationToken cancellationToken)
+    private async Task<bool> IdleWaitAsync(ImapClient client, IMailFolder imapInbox, LocalAccount account, CancellationToken cancellationToken)
     {
         _logger.Debug("Entering IMAP IDLE for account {AccountId} ({Email})",
             account.Id, account.EmailAddress);
 
         using var idleDone = new CancellationTokenSource();
         idleDone.CancelAfter(IdleTimeout);
+
+        // Cancel IDLE immediately when the server pushes a new-mail notification (EXISTS).
+        // Without this, IdleAsync blocks until the 29-minute timeout even if mail arrives.
+        void OnCountChanged(object? sender, EventArgs e) => idleDone.Cancel();
+        imapInbox.CountChanged += OnCountChanged;
 
         try
         {
@@ -428,6 +433,10 @@ public class SyncManager : ISyncManager, IDisposable
         {
             // IDLE timeout expired or server sent notification — this is normal
             return true;
+        }
+        finally
+        {
+            imapInbox.CountChanged -= OnCountChanged;
         }
     }
 

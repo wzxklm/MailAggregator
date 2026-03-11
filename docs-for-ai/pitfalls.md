@@ -24,6 +24,7 @@
 - **IMAP ID (RFC 2971) before auth**: 163.com/Coremail requires `IdentifyAsync` before login. Only send when `ImapCapabilities.Id` present; failure is non-fatal (log and swallow)
 - **IMAP IDLE needs dedicated connection**: IDLE occupies connection. Pool max 2 per account
 - **IDLE timeout**: 29min (RFC 2177 < 30min). Reopen folder before re-entering IDLE
+- **MailKit `IdleAsync` does not auto-return on new mail**: `IdleAsync(doneToken, ct)` only exits when `doneToken` is cancelled — server EXISTS notifications update `folder.Count` internally but do NOT break out of IDLE. Must subscribe to `folder.CountChanged` and cancel the done token in the handler, otherwise IDLE blocks for the full timeout (29min) even when mail arrives
 - **Validate pooled connections**: Check `IsConnected && IsAuthenticated` before reuse; release stale ones
 - **Microsoft "not connected" non-transient error**: `IsNonTransientAuthError` detects this. `ImapConnectionService` retry loop rethrows immediately
 - **MimeKit TryParse doesn't validate format**: Accepts bare numbers without domain. Use `ParseAndValidateAddresses` to verify `local@domain` before SMTP send
