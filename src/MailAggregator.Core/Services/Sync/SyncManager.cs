@@ -33,7 +33,7 @@ public class SyncManager : ISyncManager, IDisposable
     /// <summary>
     /// Polling interval used when the server does not support IMAP IDLE.
     /// </summary>
-    internal static readonly TimeSpan PollingInterval = TimeSpan.FromMinutes(2);
+    internal static readonly TimeSpan PollingInterval = TimeSpan.FromSeconds(59);
 
     /// <summary>
     /// Jitter factor: backoff delay is randomized within [delay * (1 - factor), delay * (1 + factor)]
@@ -226,7 +226,12 @@ public class SyncManager : ISyncManager, IDisposable
                 // Step 3: Initial incremental sync using the IDLE client (avoids extra connection)
                 _logger.Information("Running incremental sync on Inbox for account {AccountId} ({Email})",
                     account.Id, account.EmailAddress);
-                await _emailSyncService.SyncIncrementalAsync(account, inbox, client, cancellationToken);
+                var initialNewCount = await _emailSyncService.SyncIncrementalAsync(account, inbox, client, cancellationToken);
+
+                if (initialNewCount > 0)
+                {
+                    OnNewEmailsReceived(new NewEmailsEventArgs(account.Id, account.EmailAddress, initialNewCount));
+                }
 
                 // Step 4: Open Inbox and determine watch strategy
                 var imapInbox = await client.GetFolderAsync(inbox.FullName, cancellationToken);

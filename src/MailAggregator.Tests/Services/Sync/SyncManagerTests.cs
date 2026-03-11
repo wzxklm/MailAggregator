@@ -317,7 +317,7 @@ public class SyncManagerTests : IDisposable
 
         _mockEmailSyncService
             .Setup(s => s.SyncIncrementalAsync(It.IsAny<LocalAccount>(), It.IsAny<LocalMailFolder>(), It.IsAny<ImapClient>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(0);
 
         // The sync loop will fail trying to use the ImapClient for IDLE (since it's not connected),
         // causing a reconnect. We want to verify the orchestration, not actual IDLE behavior.

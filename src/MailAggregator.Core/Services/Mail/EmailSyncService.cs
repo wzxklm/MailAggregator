@@ -162,7 +162,7 @@ public class EmailSyncService : IEmailSyncService
         await imapFolder.CloseAsync(false, cancellationToken);
     }
 
-    public async Task SyncIncrementalAsync(Account account, LocalMailFolder folder, CancellationToken cancellationToken = default)
+    public async Task<int> SyncIncrementalAsync(Account account, LocalMailFolder folder, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(account);
         ArgumentNullException.ThrowIfNull(folder);
@@ -173,7 +173,7 @@ public class EmailSyncService : IEmailSyncService
         {
             using var pooled = await _connectionPool.GetConnectionAsync(account, cancellationToken);
             using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
-            await SyncIncrementalCoreAsync(account, folder, pooled.Client, dbContext, cancellationToken);
+            return await SyncIncrementalCoreAsync(account, folder, pooled.Client, dbContext, cancellationToken);
         }
         finally
         {
@@ -181,7 +181,7 @@ public class EmailSyncService : IEmailSyncService
         }
     }
 
-    public async Task SyncIncrementalAsync(Account account, LocalMailFolder folder, ImapClient client, CancellationToken cancellationToken = default)
+    public async Task<int> SyncIncrementalAsync(Account account, LocalMailFolder folder, ImapClient client, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(account);
         ArgumentNullException.ThrowIfNull(folder);
@@ -191,7 +191,7 @@ public class EmailSyncService : IEmailSyncService
         try
         {
             using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
-            await SyncIncrementalCoreAsync(account, folder, client, dbContext, cancellationToken);
+            return await SyncIncrementalCoreAsync(account, folder, client, dbContext, cancellationToken);
         }
         finally
         {
@@ -199,7 +199,7 @@ public class EmailSyncService : IEmailSyncService
         }
     }
 
-    private async Task SyncIncrementalCoreAsync(Account account, LocalMailFolder folder, ImapClient client, MailAggregatorDbContext dbContext, CancellationToken cancellationToken)
+    private async Task<int> SyncIncrementalCoreAsync(Account account, LocalMailFolder folder, ImapClient client, MailAggregatorDbContext dbContext, CancellationToken cancellationToken)
     {
         var imapFolder = await client.GetFolderAsync(folder.FullName, cancellationToken);
         try
@@ -221,7 +221,7 @@ public class EmailSyncService : IEmailSyncService
                 folder.FullName, account.EmailAddress);
             dbContext.Folders.Remove(folder);
             await SaveChangesSafeAsync(dbContext, cancellationToken);
-            return;
+            return 0;
         }
 
         // Check UIDVALIDITY - if changed, reset folder cache
@@ -241,7 +241,7 @@ public class EmailSyncService : IEmailSyncService
             // saturating the pool. Call core method directly since caller already holds the folder lock.
             await imapFolder.CloseAsync(false, cancellationToken);
             await SyncInitialCoreAsync(account, folder, client, cancellationToken);
-            return;
+            return 0;
         }
 
         // Refresh MaxUid from DB in case another sync caller updated it
@@ -253,6 +253,7 @@ public class EmailSyncService : IEmailSyncService
             folder.MaxUid = dbMaxUid;
 
         // Fetch new messages (UID > MaxUid)
+        var newCount = 0;
         if (folder.MaxUid > 0)
         {
             var range = new UniqueIdRange(new UniqueId(folder.MaxUid + 1), UniqueId.MaxValue);
@@ -260,13 +261,13 @@ public class EmailSyncService : IEmailSyncService
 
             if (uids.Count > 0)
             {
-                var actualNew = await FetchAndCacheMessagesAsync(imapFolder, folder, account, uids, dbContext, cancellationToken);
+                newCount = await FetchAndCacheMessagesAsync(imapFolder, folder, account, uids, dbContext, cancellationToken);
                 folder.MaxUid = uids.Max(u => u.Id);
 
-                if (actualNew > 0)
+                if (newCount > 0)
                 {
                     _logger.Information("Incremental sync: {Count} new messages in {Folder} for {Email}",
-                        actualNew, folder.FullName, account.EmailAddress);
+                        newCount, folder.FullName, account.EmailAddress);
                 }
             }
         }
@@ -286,6 +287,7 @@ public class EmailSyncService : IEmailSyncService
         await SaveChangesSafeAsync(dbContext, cancellationToken);
 
         await imapFolder.CloseAsync(false, cancellationToken);
+        return newCount;
     }
 
     public async Task SetMessageReadAsync(Account account, EmailMessage message, bool isRead, CancellationToken cancellationToken = default)

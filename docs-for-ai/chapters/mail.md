@@ -65,7 +65,8 @@ IMAP folder list → SPECIAL-USE mapping → DB sync (add/update/delete)
 ### Initial sync (`SyncInitialAsync`)
 Last 30 days, summaries only (no body), batch save every 50
 
-### Incremental sync (`SyncIncrementalAsync`)
+### Incremental sync (`SyncIncrementalAsync`) → `Task<int>`
+- Returns count of new messages synced
 - Check UIDVALIDITY (changed → reset + re-sync via `SyncInitialCoreAsync`)
 - Fetch new (UID > MaxUid) + `SyncFlagsAndDetectDeletionsAsync`
 - Folder update via `Attach` + `IsModified` (avoids `Update()` cascade)
@@ -113,9 +114,9 @@ Last 30 days, summaries only (no body), batch save every 50
 
 ## Background Sync — `SyncManager.cs`
 
-- **Constants**: `IdleTimeout=29min`, `InitialReconnectDelay=1s`, `MaxReconnectDelay=300s`, `PollingInterval=2min`, `JitterFactor=0.25`
+- **Constants**: `IdleTimeout=29min`, `InitialReconnectDelay=1s`, `MaxReconnectDelay=300s`, `PollingInterval=59s`, `JitterFactor=0.25`
 - **Per-account**: `ConcurrentDictionary<int, (Task, CancellationTokenSource)>`
-- **Watch loop** (`AccountSyncLoopAsync`): Connect → sync folders → inbox incremental → open Inbox → IDLE or poll
+- **Watch loop** (`AccountSyncLoopAsync`): Connect → sync folders → inbox incremental (fires `NewEmailsReceived` if new messages found) → open Inbox → IDLE or poll
   - **IDLE path**: `IdleWaitAsync` (29min timeout). IDLE rejection → poll fallback
   - **Poll path**: `Task.Delay(PollingInterval)` + `NoOpAsync`
   - New messages → incremental sync → `NewEmailsReceived` event → loop

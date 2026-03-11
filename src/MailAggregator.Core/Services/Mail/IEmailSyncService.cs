@@ -26,13 +26,14 @@ public interface IEmailSyncService
     /// Performs incremental sync based on UIDVALIDITY + max UID.
     /// Creates and disposes its own IMAP connection.
     /// </summary>
-    Task SyncIncrementalAsync(Account account, MailFolder folder, CancellationToken cancellationToken = default);
+    Task<int> SyncIncrementalAsync(Account account, MailFolder folder, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Performs incremental sync using a caller-provided IMAP client.
     /// The caller is responsible for connecting and disconnecting the client.
+    /// Returns the number of new messages synced.
     /// </summary>
-    Task SyncIncrementalAsync(Account account, MailFolder folder, ImapClient client, CancellationToken cancellationToken = default);
+    Task<int> SyncIncrementalAsync(Account account, MailFolder folder, ImapClient client, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Sets or clears the \Seen flag on a message on the IMAP server and updates local cache.

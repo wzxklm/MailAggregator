@@ -182,14 +182,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
             FolderTree = newTree;
             await UpdateUnreadCountsAsync();
 
-            // Select first inbox by default
-            var firstInbox = FolderTree
-                .SelectMany(a => a.Children)
-                .FirstOrDefault(f => f.Folder?.SpecialUse == SpecialFolderType.Inbox);
-            if (firstInbox != null)
-            {
-                await SelectFolderAsync(firstInbox);
-            }
+            // Default to unified inbox view
+            await ShowUnifiedInboxAsync();
 
             StatusText = $"{accounts.Count} account(s) loaded";
         }

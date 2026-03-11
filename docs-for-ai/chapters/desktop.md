@@ -77,7 +77,7 @@ Toolbar replaced from `ToolBarTray` to custom `Border` command bar with `Segoe M
 **Commands**:
 | Command | Action |
 |---------|--------|
-| `LoadAccountsCommand` | Load all → sync folders → build tree → start sync (per-account try/catch) |
+| `LoadAccountsCommand` | Load all → sync folders → build tree → start sync → show unified inbox (per-account try/catch) |
 | `SelectFolderCommand` | Incremental sync → load ≤200 emails (no body) |
 | `ShowUnifiedInboxCommand` | Sync all Inboxes → merge |
 | `MarkAsReadCommand` / `DeleteMessageCommand` | Read / Move to Trash |

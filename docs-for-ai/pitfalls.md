@@ -62,7 +62,7 @@
 - **Account deletion cleanup order**: `StopAccountSyncAsync` → `RemoveAccount` (pool) → `RemoveTokenRefreshLock` → delete attachments → delete DB
 - **Detach tracked Account before Update/Delete**: Root DbContext may track stale entity. Update: detach via `ChangeTracker.Entries<Account>()`. Delete: `Detached` → re-fetch → `Remove(freshAccount)`
 - **Account update restarts sync**: Validates host/port, then stop → remove pool → restart if syncing
-- **IDLE fallback**: Check `ImapCapabilities.Idle`. No IDLE → 2min polling + `NoOpAsync`. IDLE rejection (`ImapCommandException`) → poll that cycle
+- **IDLE fallback**: Check `ImapCapabilities.Idle`. No IDLE → 59s polling + `NoOpAsync`. IDLE rejection (`ImapCommandException`) → poll that cycle
 - **Merged flag sync + deletion**: `SyncFlagsAndDetectDeletionsAsync` — single FETCH (missing UIDs = deleted)
 - **Pool cleanup timer**: 5min `Timer` removes zombie connections (NAT/mobile silent TCP drops)
 - **Pool size atomic tracking**: `_poolCounts` `AddOrUpdate` prevents exceeding limit
