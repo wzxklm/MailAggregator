@@ -110,14 +110,11 @@ public class EmailSyncService : IEmailSyncService
         }
         else
         {
-            // Server returned no personal namespaces — GetFoldersAsync with a
-            // manually constructed FolderNamespace fails on some servers (e.g. seek.li).
-            // Fall back to enumerating subfolders from the root folder.
-            _logger.Warning("IMAP server for {Email} has no personal namespaces, enumerating from root folder", account.EmailAddress);
-            var rootFolder = client.GetFolder("");
-            var folders = new List<IMailFolder>();
-            await CollectSubfoldersAsync(rootFolder, folders, cancellationToken);
-            imapFolders = folders;
+            // Server returned no personal namespaces and may not support
+            // GetFolder("") or GetFoldersAsync with a constructed namespace.
+            // Use INBOX as the sole folder — guaranteed by IMAP spec.
+            _logger.Warning("IMAP server for {Email} has no personal namespaces, using INBOX only", account.EmailAddress);
+            imapFolders = new List<IMailFolder> { client.Inbox };
         }
 
         var localFolders = await dbContext.Folders
@@ -754,16 +751,6 @@ public class EmailSyncService : IEmailSyncService
                 .ExecuteDeleteAsync(cancellationToken);
 
             _logger.Information("Detected and removed {Count} deleted messages in {Folder}", count, localFolder.FullName);
-        }
-    }
-
-    private static async Task CollectSubfoldersAsync(IMailFolder parent, List<IMailFolder> result, CancellationToken cancellationToken)
-    {
-        var children = await parent.GetSubfoldersAsync(false, cancellationToken);
-        foreach (var child in children)
-        {
-            result.Add(child);
-            await CollectSubfoldersAsync(child, result, cancellationToken);
         }
     }
 
