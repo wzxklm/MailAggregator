@@ -110,8 +110,12 @@ public class EmailSyncService : IEmailSyncService
         }
         else
         {
-            _logger.Warning("IMAP server for {Email} has no personal namespaces, using fallback", account.EmailAddress);
-            personalNamespace = new FolderNamespace('.', "");
+            // Server returned no personal namespaces — construct one using the
+            // separator from INBOX (always available post-auth) so that
+            // GetFoldersAsync issues a single LIST "" "*" instead of per-level calls.
+            var separator = client.Inbox.DirectorySeparator;
+            _logger.Warning("IMAP server for {Email} has no personal namespaces, using INBOX separator '{Separator}'", account.EmailAddress, separator);
+            personalNamespace = new FolderNamespace(separator, "");
         }
         var imapFolders = await client.GetFoldersAsync(personalNamespace, cancellationToken: cancellationToken);
 

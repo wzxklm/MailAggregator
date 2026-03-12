@@ -76,7 +76,7 @@
 - **Network-aware reconnection**: `ManualResetEventSlim` (`_networkAvailable`): wait when down, immediate reconnect (reset attempt=0) on restore. Use `_networkAvailable.IsSet` directly
 - **AutoDiscovery cancels on first success**: L1-3 parallel → first success → `CancelAsync()` others
 - **Discovery skip CancellationTokenSource lifecycle**: `AddAccountViewModel._discoveryCts` must be Cancel+Dispose+null before replacement. `SkipDiscovery` also resets `IsDiscoverySucceeded = false` to prevent stale state from a previous successful discovery affecting `GoBack` navigation
-- **PersonalNamespaces may be empty**: Some IMAP servers return empty `PersonalNamespaces`. `SyncFoldersCoreAsync` falls back to `FolderNamespace('.', "")` with a warning — the `'.'` separator is a best guess and may not be correct for all servers
+- **PersonalNamespaces may be empty**: Some IMAP servers return empty `PersonalNamespaces`. `SyncFoldersCoreAsync` falls back to detecting the correct separator from `client.Inbox.DirectorySeparator` and constructing a `FolderNamespace(separator, "")` — this ensures a single `LIST "" "*"` call uses the server's actual separator rather than a hardcoded guess
 
 ## 2FA / TOTP
 
