@@ -103,21 +103,22 @@ public class EmailSyncService : IEmailSyncService
 
     private async Task<IReadOnlyList<LocalMailFolder>> SyncFoldersCoreAsync(Account account, ImapClient client, MailAggregatorDbContext dbContext, CancellationToken cancellationToken)
     {
-        FolderNamespace personalNamespace;
+        IList<IMailFolder> imapFolders;
         if (client.PersonalNamespaces.Count > 0)
         {
-            personalNamespace = client.PersonalNamespaces[0];
+            imapFolders = await client.GetFoldersAsync(client.PersonalNamespaces[0], cancellationToken: cancellationToken);
         }
         else
         {
-            // Server returned no personal namespaces — construct one using the
-            // separator from INBOX (always available post-auth) so that
-            // GetFoldersAsync issues a single LIST "" "*" instead of per-level calls.
-            var separator = client.Inbox.DirectorySeparator;
-            _logger.Warning("IMAP server for {Email} has no personal namespaces, using INBOX separator '{Separator}'", account.EmailAddress, separator);
-            personalNamespace = new FolderNamespace(separator, "");
+            // Server returned no personal namespaces — GetFoldersAsync with a
+            // manually constructed FolderNamespace fails on some servers (e.g. seek.li).
+            // Fall back to enumerating subfolders from the root folder.
+            _logger.Warning("IMAP server for {Email} has no personal namespaces, enumerating from root folder", account.EmailAddress);
+            var rootFolder = client.GetFolder("");
+            var folders = new List<IMailFolder>();
+            await CollectSubfoldersAsync(rootFolder, folders, cancellationToken);
+            imapFolders = folders;
         }
-        var imapFolders = await client.GetFoldersAsync(personalNamespace, cancellationToken: cancellationToken);
 
         var localFolders = await dbContext.Folders
             .Where(f => f.AccountId == account.Id)
@@ -753,6 +754,16 @@ public class EmailSyncService : IEmailSyncService
                 .ExecuteDeleteAsync(cancellationToken);
 
             _logger.Information("Detected and removed {Count} deleted messages in {Folder}", count, localFolder.FullName);
+        }
+    }
+
+    private static async Task CollectSubfoldersAsync(IMailFolder parent, List<IMailFolder> result, CancellationToken cancellationToken)
+    {
+        var children = await parent.GetSubfoldersAsync(false, cancellationToken);
+        foreach (var child in children)
+        {
+            result.Add(child);
+            await CollectSubfoldersAsync(child, result, cancellationToken);
         }
     }
 
