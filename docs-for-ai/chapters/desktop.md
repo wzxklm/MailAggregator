@@ -99,7 +99,15 @@ Toolbar replaced from `ToolBarTray` to custom `Border` command bar with `Segoe M
 
 ## AddAccountWindow + AddAccountViewModel
 
-**5-step wizard**: 0: email → 1: discovery (`ui:ProgressRing` instead of ProgressBar) → 2: auth choice (OAuth/Password) → 3: manual config (`ui:ControlHelper.PlaceholderText` for TextBox placeholders) → 4: complete
+**5-step wizard**: 0: email → 1: discovery (`ui:ProgressRing` + "Skip" button) → 2: auth choice (OAuth/Password) → 3: manual config (`ui:ControlHelper.PlaceholderText` for TextBox placeholders) → 4: complete
+
+**Two wizard paths**:
+- **Discovery success**: 0 → 1 → 2 → 4. From step 2, "Server Settings" → 3 → Back → 2
+- **Discovery fail/skip**: 0 → 1 → 3 → "Next" → 2 → 4. Step 3 shows "Next" (not "Save") in non-edit mode
+
+**Skip discovery**: Step 1 has "Skip — Configure Manually" button. Cancels the in-flight `DiscoverAsync` via `CancellationTokenSource`, jumps to step 3. `IsDiscoverySucceeded` tracks whether discovery found config — controls success banner visibility on step 2 and `GoBack` navigation logic
+
+**GoBack navigation**: Step 2 Back → 0 (discovered) or 3 (manual). Step 3 Back → 2 (discovered) or 0 (manual). Step 1 is transient (never navigated back to)
 
 **Config passthrough**: Builds `ServerConfiguration` from UI fields → `manualConfig` param (skips re-discovery). `SelectedAuthType` passed explicitly.
 

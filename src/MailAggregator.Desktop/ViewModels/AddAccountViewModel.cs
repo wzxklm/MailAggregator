@@ -32,6 +32,9 @@ public partial class AddAccountViewModel : ObservableObject
     [ObservableProperty]
     private bool _isDiscovering;
 
+    [ObservableProperty]
+    private bool _isDiscoverySucceeded;
+
     // Step 2: Auth
     [ObservableProperty]
     private AuthType _selectedAuthType = AuthType.Password;
@@ -92,6 +95,7 @@ public partial class AddAccountViewModel : ObservableObject
     private string _windowTitle = "Add Account";
 
     private Account? _editingAccount;
+    private CancellationTokenSource? _discoveryCts;
 
     public bool DialogResult { get; private set; }
 
@@ -133,14 +137,20 @@ public partial class AddAccountViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(CanDiscover))]
     private async Task DiscoverAsync()
     {
+        _discoveryCts?.Cancel();
+        _discoveryCts?.Dispose();
+        _discoveryCts = new CancellationTokenSource();
+        var ct = _discoveryCts.Token;
+
         try
         {
             IsDiscovering = true;
+            IsDiscoverySucceeded = false;
             ErrorMessage = string.Empty;
             DiscoveryStatus = "Discovering server configuration...";
             CurrentStep = 1;
 
-            var config = await _autoDiscoveryService.DiscoverAsync(EmailAddress);
+            var config = await _autoDiscoveryService.DiscoverAsync(EmailAddress, ct);
 
             if (config != null)
             {
@@ -152,6 +162,7 @@ public partial class AddAccountViewModel : ObservableObject
                 SmtpEncryption = config.SmtpEncryption;
 
                 DiscoveryStatus = $"Found: {config.ImapHost}:{config.ImapPort}";
+                IsDiscoverySucceeded = true;
 
                 // Check if OAuth is available (OnImapHostChanged already fired
                 // from setting ImapHost above, but discovery may set a different
@@ -165,6 +176,10 @@ public partial class AddAccountViewModel : ObservableObject
                 DiscoveryStatus = "Could not auto-discover. Please configure manually.";
                 CurrentStep = 3; // Skip to manual config
             }
+        }
+        catch (OperationCanceledException)
+        {
+            // User clicked "Skip" — go to manual config silently
         }
         catch (Exception ex)
         {
@@ -180,16 +195,38 @@ public partial class AddAccountViewModel : ObservableObject
     }
 
     [RelayCommand]
+    private void SkipDiscovery()
+    {
+        _discoveryCts?.Cancel();
+        _discoveryCts?.Dispose();
+        _discoveryCts = null;
+        IsDiscoverySucceeded = false;
+        CurrentStep = 3;
+    }
+
+    [RelayCommand]
     private void GoToServerConfig()
     {
         CurrentStep = 3;
     }
 
     [RelayCommand]
+    private void GoToAuth()
+    {
+        CurrentStep = 2;
+    }
+
+    [RelayCommand]
     private void GoBack()
     {
-        if (CurrentStep > 0 && !IsEditMode)
-            CurrentStep--;
+        if (IsEditMode) return;
+
+        CurrentStep = CurrentStep switch
+        {
+            2 => IsDiscoverySucceeded ? 0 : 3, // Auth → Email (discovered) or Server Config (manual)
+            3 => IsDiscoverySucceeded ? 2 : 0,  // Server Config → Auth (discovered) or Email (manual)
+            _ => 0,
+        };
     }
 
     [RelayCommand]

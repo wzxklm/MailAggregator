@@ -103,7 +103,16 @@ public class EmailSyncService : IEmailSyncService
 
     private async Task<IReadOnlyList<LocalMailFolder>> SyncFoldersCoreAsync(Account account, ImapClient client, MailAggregatorDbContext dbContext, CancellationToken cancellationToken)
     {
-        var personalNamespace = client.PersonalNamespaces[0];
+        FolderNamespace personalNamespace;
+        if (client.PersonalNamespaces.Count > 0)
+        {
+            personalNamespace = client.PersonalNamespaces[0];
+        }
+        else
+        {
+            _logger.Warning("IMAP server for {Email} has no personal namespaces, using fallback", account.EmailAddress);
+            personalNamespace = new FolderNamespace('.', "");
+        }
         var imapFolders = await client.GetFoldersAsync(personalNamespace, cancellationToken: cancellationToken);
 
         var localFolders = await dbContext.Folders

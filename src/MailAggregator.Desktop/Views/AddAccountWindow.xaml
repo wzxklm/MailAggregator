@@ -47,6 +47,8 @@
             <ui:ProgressRing IsActive="True" Width="48" Height="48" Margin="0,0,0,16" />
             <TextBlock Text="{Binding DiscoveryStatus}" TextWrapping="Wrap"
                        Foreground="{StaticResource ReadBrush}" FontSize="13" />
+            <Button Content="Skip — Configure Manually" Style="{StaticResource ToolbarButton}"
+                    Command="{Binding SkipDiscoveryCommand}" Margin="0,20,0,0" HorizontalAlignment="Left" />
         </StackPanel>
 
         <!-- Step 2: Auth selection -->
@@ -64,8 +66,9 @@
 
             <TextBlock Text="Authentication" Style="{StaticResource PageTitle}" />
 
-            <!-- Discovery result -->
-            <Border Background="{StaticResource SuccessBackgroundBrush}" CornerRadius="4" Padding="12,8" Margin="0,0,0,16">
+            <!-- Discovery result (only when auto-discovery succeeded) -->
+            <Border Background="{StaticResource SuccessBackgroundBrush}" CornerRadius="4" Padding="12,8" Margin="0,0,0,16"
+                    Visibility="{Binding IsDiscoverySucceeded, Converter={StaticResource BoolToVisibility}}">
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="14"
                                Foreground="{StaticResource SuccessTextBrush}" VerticalAlignment="Center" Margin="0,0,8,0" />
@@ -198,8 +201,13 @@
                     <StackPanel Orientation="Horizontal">
                         <Button Content="Back" Style="{StaticResource ToolbarButton}"
                                 Command="{Binding GoBackCommand}" Margin="0,0,8,0" />
+                        <!-- Edit mode: save directly; New account: go to auth step for password -->
                         <Button Content="Save" Style="{StaticResource PrimaryButton}"
-                                Command="{Binding SaveCommand}" />
+                                Command="{Binding SaveCommand}"
+                                Visibility="{Binding IsEditMode, Converter={StaticResource BoolToVisibility}}" />
+                        <Button Content="Next" Style="{StaticResource PrimaryButton}"
+                                Command="{Binding GoToAuthCommand}"
+                                Visibility="{Binding IsEditMode, Converter={StaticResource BoolToVisibility}, ConverterParameter=Invert}" />
                     </StackPanel>
                 </Border>
 

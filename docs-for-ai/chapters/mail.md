@@ -60,7 +60,7 @@ Same pattern as IMAP. **Interface**: `ISmtpConnectionService` — `ConnectAsync(
 Uses `IDbContextFactory` — scoped DbContext per operation (thread safety).
 
 ### Folder sync (`SyncFoldersCoreAsync`)
-IMAP folder list → SPECIAL-USE mapping → DB sync (add/update/delete)
+IMAP folder list → SPECIAL-USE mapping → DB sync (add/update/delete). Falls back to `FolderNamespace('.', "")` with a warning log if server has no personal namespaces
 
 ### Folder read from DB (`GetFoldersFromDbAsync`)
 Reads folders for an account directly from the local database (no IMAP connection). Returns empty list if no folders have been synced yet. Used by `MainViewModel` and `SyncManager` to avoid redundant IMAP folder syncs after initial connection.
