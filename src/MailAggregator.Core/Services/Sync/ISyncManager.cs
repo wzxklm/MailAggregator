@@ -31,6 +31,11 @@ public interface ISyncManager
     /// Raised when new emails arrive during background sync.
     /// </summary>
     event EventHandler<NewEmailsEventArgs>? NewEmailsReceived;
+
+    /// <summary>
+    /// Raised when folders are synced from IMAP for an account (typically on first connection).
+    /// </summary>
+    event EventHandler<FoldersSyncedEventArgs>? FoldersSynced;
 }
 
 /// <summary>
@@ -47,5 +52,18 @@ public class NewEmailsEventArgs : EventArgs
         AccountId = accountId;
         AccountEmail = accountEmail;
         NewMessageCount = newMessageCount;
+    }
+}
+
+/// <summary>
+/// Event args for folder sync completion notifications.
+/// </summary>
+public class FoldersSyncedEventArgs : EventArgs
+{
+    public int AccountId { get; }
+
+    public FoldersSyncedEventArgs(int accountId)
+    {
+        AccountId = accountId;
     }
 }

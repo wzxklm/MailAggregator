@@ -62,11 +62,13 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _logger = logger;
 
         _syncManager.NewEmailsReceived += OnNewEmailsReceived;
+        _syncManager.FoldersSynced += OnFoldersSynced;
     }
 
     public void Dispose()
     {
         _syncManager.NewEmailsReceived -= OnNewEmailsReceived;
+        _syncManager.FoldersSynced -= OnFoldersSynced;
         _folderSwitchCts?.Cancel();
         _folderSwitchCts?.Dispose();
         _loadAccountsCts?.Cancel();
@@ -86,6 +88,21 @@ public partial class MainViewModel : ObservableObject, IDisposable
                     _logger.Error(t.Exception, "Sync failed for {Email}", account.EmailAddress),
                     TaskContinuationOptions.OnlyOnFaulted);
             }
+        }
+    }
+
+    private static void PopulateFolderChildren(AccountFolderNode accountNode, IEnumerable<MailFolder> folders)
+    {
+        accountNode.Children.Clear();
+        foreach (var folder in folders.OrderBy(f => f.SpecialUse != SpecialFolderType.Inbox)
+                                       .ThenBy(f => f.Name))
+        {
+            accountNode.Children.Add(new AccountFolderNode
+            {
+                DisplayName = folder.Name,
+                Folder = folder,
+                Account = accountNode.Account
+            });
         }
     }
 
@@ -174,16 +191,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
                 if (folders != null)
                 {
-                    foreach (var folder in folders.OrderBy(f => f.SpecialUse != SpecialFolderType.Inbox)
-                                                  .ThenBy(f => f.Name))
-                    {
-                        accountNode.Children.Add(new AccountFolderNode
-                        {
-                            DisplayName = folder.Name,
-                            Folder = folder,
-                            Account = account
-                        });
-                    }
+                    PopulateFolderChildren(accountNode, folders);
                 }
 
                 newTree.Add(accountNode);
@@ -587,6 +595,25 @@ public partial class MainViewModel : ObservableObject, IDisposable
                 TaskContinuationOptions.OnlyOnFaulted);
 
             NotificationHelper.ShowNewMailNotification(e.AccountEmail, e.NewMessageCount);
+        });
+    }
+
+    private void OnFoldersSynced(object? sender, FoldersSyncedEventArgs e)
+    {
+        System.Windows.Application.Current.Dispatcher.InvokeAsync(async () =>
+        {
+            try
+            {
+                var accountNode = FolderTree.FirstOrDefault(n => n.Account?.Id == e.AccountId);
+                if (accountNode == null) return;
+
+                var folders = await _emailSyncService.GetFoldersFromDbAsync(e.AccountId);
+                PopulateFolderChildren(accountNode, folders);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Failed to refresh folders for account {AccountId}", e.AccountId);
+            }
         });
     }
 

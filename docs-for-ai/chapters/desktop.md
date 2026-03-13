@@ -91,6 +91,10 @@ Toolbar replaced from `ToolBarTray` to custom `Border` command bar with `Segoe M
 
 **New email event**: `OnNewEmailsReceived()` → Dispatcher → Toast → insert at top → update unread counts
 
+**Folders synced event**: `OnFoldersSynced()` → Dispatcher → looks up `AccountFolderNode` by `AccountId` → `GetFoldersFromDbAsync` → `PopulateFolderChildren` (refreshes folder tree when IMAP syncs folders on first connection)
+
+**`PopulateFolderChildren`** (static helper): Clears and repopulates an `AccountFolderNode.Children` from a folder list (Inbox first, then alphabetical). Used by both `LoadAccountsAsync` and `OnFoldersSynced` to avoid duplication.
+
 **Unread counts**: `UpdateUnreadCountsAsync()` queries `Messages` table (grouped `COUNT WHERE !IsRead`), updates `AccountFolderNode.UnreadCount` with change-detection guard. Called on load and new-email sync. `MarkAsReadAsync` decrements locally. XAML badge uses `NullToVisibility` + `FallbackValue=Collapsed`.
 
 **Nested**: `AccountFolderNode : ObservableObject` (`DisplayName`, `UnreadCount`, `Account`, `Folder`, `IsAccount`, `Children`) for TreeView

@@ -59,6 +59,7 @@ public class SyncManager : ISyncManager, IDisposable
     private readonly ManualResetEventSlim _networkAvailable = new(true);
 
     public event EventHandler<NewEmailsEventArgs>? NewEmailsReceived;
+    public event EventHandler<FoldersSyncedEventArgs>? FoldersSynced;
 
     public SyncManager(
         IImapConnectionService imapConnectionService,
@@ -222,6 +223,7 @@ public class SyncManager : ISyncManager, IDisposable
                 if (folders.Count == 0)
                 {
                     folders = await _emailSyncService.SyncFoldersAsync(account, client, cancellationToken);
+                    OnFoldersSynced(new FoldersSyncedEventArgs(account.Id));
                 }
                 var inbox = folders.FirstOrDefault(f => f.SpecialUse == SpecialFolderType.Inbox);
 
@@ -450,6 +452,14 @@ public class SyncManager : ISyncManager, IDisposable
     protected virtual void OnNewEmailsReceived(NewEmailsEventArgs e)
     {
         NewEmailsReceived?.Invoke(this, e);
+    }
+
+    /// <summary>
+    /// Raises the <see cref="FoldersSynced"/> event.
+    /// </summary>
+    protected virtual void OnFoldersSynced(FoldersSyncedEventArgs e)
+    {
+        FoldersSynced?.Invoke(this, e);
     }
 
     private void OnNetworkAvailabilityChanged(object? sender, NetworkAvailabilityEventArgs e)

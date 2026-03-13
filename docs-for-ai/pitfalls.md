@@ -42,7 +42,7 @@
 ## WPF / UI
 
 - **Styles in `Resources/Styles.xaml` only**: No styles/converters in individual Window files
-- **Unsubscribe singleton events**: ViewModels subscribing to events like `SyncManager.NewEmailsReceived` must `IDisposable` + unsubscribe, else memory leak
+- **Unsubscribe singleton events**: ViewModels subscribing to events like `SyncManager.NewEmailsReceived` / `FoldersSynced` must `IDisposable` + unsubscribe, else memory leak
 - **UI thread updates**: ObservableCollection changes from background → `Dispatcher.Invoke()`
 - **Per-account error isolation**: Multi-account loops must try/catch per account (one failure must not block others)
 - **`UseWindowsForms=true` required**: NotifyIcon depends on WinForms
