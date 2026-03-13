@@ -68,6 +68,24 @@ Thunderbird-style 4-strategy defensive folder discovery → SPECIAL-USE mapping 
 
 Always calls `EnsureInboxIncluded` to guarantee INBOX in results regardless of which strategy succeeded
 
+#### Non-compliant IMAP servers: FolderCache reflection injection (`TryInjectRootFolderCache`)
+
+When an IMAP server returns `NAMESPACE NIL NIL NIL`, MailKit never populates its internal `FolderCache` (`Dictionary<string, ImapFolder>` inside `ImapEngine`) with the root folder key `""`. As a result, `GetFoldersAsync` throws `FolderNotFoundException` at the cache-lookup stage inside `QueueGetFoldersCommand` — **before** any `LIST` command is sent to the server. Strategies 1 and 2 both fail this way; the `LIST "" "*"` that Thunderbird uses successfully is never actually transmitted.
+
+`TryInjectRootFolderCache` works around this by simulating what MailKit does internally when it receives `NAMESPACE (("" "/"))`:
+
+1. Access `ImapClient`'s internal `engine` field via reflection (`BindingFlags.NonPublic | BindingFlags.Instance`)
+2. On the `ImapEngine` object, read the `FolderCache` field and check whether `""` is already present
+3. If not, call `CreateImapFolder("", FolderAttributes.None, separator)` via reflection to construct a root folder object
+4. Call `CacheFolder(rootFolder)` via reflection to register it in the cache
+5. Append `new FolderNamespace(separator, "")` to `client.PersonalNamespaces` so downstream code (SyncManager, reconnection logic) sees a valid namespace
+
+After injection, Strategy 2's `TryGetFoldersWithDefaultNamespaceAsync` succeeds: `TryGetCachedFolder("")` hits, MailKit constructs and sends `LIST "" "*"`, and the server's folder list is returned. (Strategy 1's `if` block was already skipped because `PersonalNamespaces.Count` was 0 at the time of the check.)
+
+The entire injection is wrapped in `try/catch`; any reflection failure (e.g. due to a future MailKit version changing internal names) is logged at Debug level and execution continues with Strategies 2–4. A shared `GetDirectorySeparator(client)` helper (returns `Inbox.DirectorySeparator` or `'/'` fallback) is used by both `TryInjectRootFolderCache` and `TryGetFoldersWithDefaultNamespaceAsync`.
+
+Reflection targets are based on **MailKit 4.15.1** internals (`ImapEngine.cs`).
+
 ### Folder read from DB (`GetFoldersFromDbAsync`)
 Reads folders for an account directly from the local database (no IMAP connection). Returns empty list if no folders have been synced yet. Used by `MainViewModel` and `SyncManager` to avoid redundant IMAP folder syncs after initial connection.
 

@@ -1,4 +1,6 @@
+using System.Collections;
 using System.Collections.Concurrent;
+using System.Reflection;
 using MailAggregator.Core.Data;
 using MailAggregator.Core.Models;
 using MailKit;
@@ -179,6 +181,12 @@ public class EmailSyncService : IEmailSyncService
         else
         {
             _logger.Warning("IMAP server for {Email} has no personal namespaces, trying defensive discovery", account.EmailAddress);
+
+            // Inject root folder into MailKit's internal FolderCache via reflection.
+            // MailKit's GetFoldersAsync checks the cache before sending LIST — when NAMESPACE
+            // returns NIL, the cache is never populated, so LIST "" "*" is never sent.
+            // This simulates what would happen if the server returned NAMESPACE (("" "/")).
+            TryInjectRootFolderCache(client);
         }
 
         // Strategy 2: Construct a default namespace (empty prefix, "/" separator)
@@ -207,15 +215,18 @@ public class EmailSyncService : IEmailSyncService
         return folders;
     }
 
+    private static char GetDirectorySeparator(ImapClient client)
+    {
+        return client.Inbox.DirectorySeparator != '\0'
+            ? client.Inbox.DirectorySeparator
+            : '/';
+    }
+
     private async Task<IList<IMailFolder>?> TryGetFoldersWithDefaultNamespaceAsync(ImapClient client, CancellationToken cancellationToken)
     {
         try
         {
-            // Use the Inbox's separator (learned from server) or default to '/'
-            var separator = client.Inbox.DirectorySeparator != '\0'
-                ? client.Inbox.DirectorySeparator
-                : '/';
-            var defaultNamespace = new FolderNamespace(separator, "");
+            var defaultNamespace = new FolderNamespace(GetDirectorySeparator(client), "");
             var folders = await client.GetFoldersAsync(defaultNamespace, cancellationToken: cancellationToken);
             if (folders.Count > 0)
             {
@@ -292,6 +303,98 @@ public class EmailSyncService : IEmailSyncService
         if (!hasInbox)
         {
             folders.Add(client.Inbox);
+        }
+    }
+
+    /// <summary>
+    /// Injects a root folder ("") into MailKit's internal FolderCache via reflection,
+    /// simulating the effect of NAMESPACE returning (("" "/")).
+    /// This allows GetFoldersAsync to send LIST "" "*" instead of throwing
+    /// FolderNotFoundException at the cache lookup stage.
+    /// Falls back silently on any reflection failure.
+    /// Reflection targets are based on MailKit 4.15.1 internals (ImapEngine).
+    /// </summary>
+    private void TryInjectRootFolderCache(ImapClient client)
+    {
+        const BindingFlags instanceAll = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+
+        try
+        {
+            var separator = GetDirectorySeparator(client);
+
+            // Access the internal ImapEngine via the "engine" field
+            var engineField = typeof(ImapClient).GetField("engine", instanceAll);
+            if (engineField == null)
+            {
+                _logger.Debug("Cannot find ImapClient.engine field, skipping root folder cache injection");
+                return;
+            }
+
+            var engine = engineField.GetValue(client);
+            if (engine == null)
+            {
+                _logger.Debug("ImapClient.engine is null, skipping root folder cache injection");
+                return;
+            }
+
+            var engineType = engine.GetType();
+
+            // Check if FolderCache already has the "" key
+            var cacheField = engineType.GetField("FolderCache", instanceAll);
+            if (cacheField == null)
+            {
+                _logger.Debug("Cannot find ImapEngine.FolderCache field, skipping root folder cache injection");
+                return;
+            }
+
+            var cache = cacheField.GetValue(engine) as IDictionary;
+            if (cache == null)
+            {
+                _logger.Debug("FolderCache is null or not IDictionary, skipping root folder cache injection");
+                return;
+            }
+
+            if (cache.Contains(""))
+            {
+                _logger.Debug("Root folder already in FolderCache, skipping injection");
+                return;
+            }
+
+            // Create root folder: CreateImapFolder("", FolderAttributes.None, separator)
+            var createMethod = engineType.GetMethod("CreateImapFolder", instanceAll);
+            if (createMethod == null)
+            {
+                _logger.Debug("Cannot find ImapEngine.CreateImapFolder method, skipping root folder cache injection");
+                return;
+            }
+
+            var rootFolder = createMethod.Invoke(engine,
+                new object[] { "", FolderAttributes.None, separator });
+            if (rootFolder == null)
+            {
+                _logger.Debug("CreateImapFolder returned null, skipping root folder cache injection");
+                return;
+            }
+
+            // Register in cache: CacheFolder(rootFolder)
+            var cacheFolderMethod = engineType.GetMethod("CacheFolder", instanceAll);
+            if (cacheFolderMethod == null)
+            {
+                _logger.Debug("Cannot find ImapEngine.CacheFolder method, skipping root folder cache injection");
+                return;
+            }
+
+            cacheFolderMethod.Invoke(engine, new object[] { rootFolder });
+
+            // Also populate PersonalNamespaces so that downstream code (SyncManager,
+            // reconnection logic) that reads this collection finds the synthetic namespace.
+            client.PersonalNamespaces.Add(new FolderNamespace(separator, ""));
+
+            _logger.Information("Injected root folder cache and default namespace for non-compliant IMAP server");
+        }
+        catch (Exception ex)
+        {
+            _logger.Debug(ex, "Root folder cache injection failed, will continue with existing strategies");
         }
     }
 
