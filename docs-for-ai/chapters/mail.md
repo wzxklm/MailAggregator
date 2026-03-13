@@ -59,8 +59,14 @@ Same pattern as IMAP. **Interface**: `ISmtpConnectionService` — `ConnectAsync(
 
 Uses `IDbContextFactory` — scoped DbContext per operation (thread safety).
 
-### Folder sync (`SyncFoldersCoreAsync`)
-IMAP folder list → SPECIAL-USE mapping → DB sync (add/update/delete). Falls back to `FolderNamespace('.', "")` with a warning log if server has no personal namespaces
+### Folder sync (`SyncFoldersCoreAsync` + `DiscoverFoldersAsync`)
+Thunderbird-style 4-strategy defensive folder discovery → SPECIAL-USE mapping → DB sync (add/update/delete):
+1. **Standard**: `GetFoldersAsync(PersonalNamespaces[0])` — compliant servers (try/catch, falls through on failure)
+2. **Default namespace**: construct `FolderNamespace(separator, "")` using Inbox separator or `/` — servers with empty NAMESPACE
+3. **Root folder**: `GetFolderAsync("")` + recursive `GetSubfoldersAsync` (depth limit 10) — servers that support per-folder LIST
+4. **INBOX only**: `client.Inbox` — guaranteed by RFC 3501 §5.1
+
+Always calls `EnsureInboxIncluded` to guarantee INBOX in results regardless of which strategy succeeded
 
 ### Folder read from DB (`GetFoldersFromDbAsync`)
 Reads folders for an account directly from the local database (no IMAP connection). Returns empty list if no folders have been synced yet. Used by `MainViewModel` and `SyncManager` to avoid redundant IMAP folder syncs after initial connection.

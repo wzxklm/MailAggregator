@@ -103,19 +103,7 @@ public class EmailSyncService : IEmailSyncService
 
     private async Task<IReadOnlyList<LocalMailFolder>> SyncFoldersCoreAsync(Account account, ImapClient client, MailAggregatorDbContext dbContext, CancellationToken cancellationToken)
     {
-        IList<IMailFolder> imapFolders;
-        if (client.PersonalNamespaces.Count > 0)
-        {
-            imapFolders = await client.GetFoldersAsync(client.PersonalNamespaces[0], cancellationToken: cancellationToken);
-        }
-        else
-        {
-            // Server returned no personal namespaces and may not support
-            // GetFolder("") or GetFoldersAsync with a constructed namespace.
-            // Use INBOX as the sole folder — guaranteed by IMAP spec.
-            _logger.Warning("IMAP server for {Email} has no personal namespaces, using INBOX only", account.EmailAddress);
-            imapFolders = new List<IMailFolder> { client.Inbox };
-        }
+        var imapFolders = await DiscoverFoldersAsync(account, client, cancellationToken);
 
         var localFolders = await dbContext.Folders
             .Where(f => f.AccountId == account.Id)
@@ -162,6 +150,149 @@ public class EmailSyncService : IEmailSyncService
         return localFolders.Where(f => serverFolderNames.Contains(f.FullName))
             .Concat(dbContext.Folders.Local.Where(f => f.AccountId == account.Id && !localFolderMap.ContainsKey(f.FullName)))
             .ToList();
+    }
+
+    /// <summary>
+    /// Thunderbird-style defensive folder discovery. Tries multiple strategies:
+    /// 1. Standard: use PersonalNamespaces[0] (works for compliant servers)
+    /// 2. Fallback: construct default namespace ("", "/") and enumerate (for servers with empty NAMESPACE)
+    /// 3. Root folder: get root via GetFolder("") and collect subfolders recursively
+    /// 4. Last resort: INBOX only (guaranteed by RFC 3501 §5.1)
+    /// Always ensures INBOX is included in results.
+    /// </summary>
+    private async Task<IList<IMailFolder>> DiscoverFoldersAsync(Account account, ImapClient client, CancellationToken cancellationToken)
+    {
+        IList<IMailFolder>? folders = null;
+
+        // Strategy 1: Standard namespace-based enumeration
+        if (client.PersonalNamespaces.Count > 0)
+        {
+            try
+            {
+                folders = await client.GetFoldersAsync(client.PersonalNamespaces[0], cancellationToken: cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.Warning(ex, "Standard namespace enumeration failed for {Email}, trying defensive discovery", account.EmailAddress);
+            }
+        }
+        else
+        {
+            _logger.Warning("IMAP server for {Email} has no personal namespaces, trying defensive discovery", account.EmailAddress);
+        }
+
+        // Strategy 2: Construct a default namespace (empty prefix, "/" separator)
+        // like Thunderbird's pre-set default namespace
+        if (folders == null || folders.Count == 0)
+        {
+            folders = await TryGetFoldersWithDefaultNamespaceAsync(client, cancellationToken);
+        }
+
+        // Strategy 3: Try root folder enumeration
+        if (folders == null || folders.Count == 0)
+        {
+            folders = await TryGetFoldersFromRootAsync(client, cancellationToken);
+        }
+
+        // Strategy 4: Last resort — INBOX only (guaranteed by RFC 3501 §5.1)
+        if (folders == null || folders.Count == 0)
+        {
+            _logger.Warning("All folder discovery strategies failed for {Email}, using INBOX only", account.EmailAddress);
+            folders = new List<IMailFolder> { client.Inbox };
+        }
+
+        // Always ensure INBOX is included (like Thunderbird's hardcoded LIST "" "INBOX")
+        EnsureInboxIncluded(client, folders);
+
+        return folders;
+    }
+
+    private async Task<IList<IMailFolder>?> TryGetFoldersWithDefaultNamespaceAsync(ImapClient client, CancellationToken cancellationToken)
+    {
+        try
+        {
+            // Use the Inbox's separator (learned from server) or default to '/'
+            var separator = client.Inbox.DirectorySeparator != '\0'
+                ? client.Inbox.DirectorySeparator
+                : '/';
+            var defaultNamespace = new FolderNamespace(separator, "");
+            var folders = await client.GetFoldersAsync(defaultNamespace, cancellationToken: cancellationToken);
+            if (folders.Count > 0)
+            {
+                _logger.Information("Default namespace discovery found {Count} folders", folders.Count);
+            }
+            return folders;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.Debug(ex, "Default namespace discovery failed, will try next strategy");
+            return null;
+        }
+    }
+
+    private async Task<IList<IMailFolder>?> TryGetFoldersFromRootAsync(ImapClient client, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var root = await client.GetFolderAsync("", cancellationToken);
+            var subfolders = await root.GetSubfoldersAsync(cancellationToken: cancellationToken);
+            if (subfolders.Count == 0)
+                return null;
+
+            // Recursively collect all subfolders
+            var allFolders = new List<IMailFolder>();
+            await CollectSubfoldersAsync(subfolders, allFolders, cancellationToken);
+            if (allFolders.Count > 0)
+            {
+                _logger.Information("Root folder discovery found {Count} folders", allFolders.Count);
+            }
+            return allFolders;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.Debug(ex, "Root folder discovery failed, will try next strategy");
+            return null;
+        }
+    }
+
+    private const int MaxFolderDepth = 10;
+
+    private async Task CollectSubfoldersAsync(IEnumerable<IMailFolder> folders, List<IMailFolder> result, CancellationToken cancellationToken, int depth = 0)
+    {
+        if (depth >= MaxFolderDepth)
+            return;
+
+        foreach (var folder in folders)
+        {
+            result.Add(folder);
+            try
+            {
+                var children = await folder.GetSubfoldersAsync(cancellationToken: cancellationToken);
+                if (children.Count > 0)
+                    await CollectSubfoldersAsync(children, result, cancellationToken, depth + 1);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.Debug(ex, "Could not list subfolders of {Folder}, skipping", folder.FullName);
+            }
+        }
+    }
+
+    private static void EnsureInboxIncluded(ImapClient client, IList<IMailFolder> folders)
+    {
+        var hasInbox = false;
+        foreach (var f in folders)
+        {
+            if (string.Equals(f.FullName, "INBOX", StringComparison.OrdinalIgnoreCase))
+            {
+                hasInbox = true;
+                break;
+            }
+        }
+        if (!hasInbox)
+        {
+            folders.Add(client.Inbox);
+        }
     }
 
     public async Task<IReadOnlyList<LocalMailFolder>> GetFoldersFromDbAsync(int accountId, CancellationToken cancellationToken = default)

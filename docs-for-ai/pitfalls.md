@@ -76,7 +76,7 @@
 - **Network-aware reconnection**: `ManualResetEventSlim` (`_networkAvailable`): wait when down, immediate reconnect (reset attempt=0) on restore. Use `_networkAvailable.IsSet` directly
 - **AutoDiscovery cancels on first success**: L1-3 parallel → first success → `CancelAsync()` others
 - **Discovery skip CancellationTokenSource lifecycle**: `AddAccountViewModel._discoveryCts` must be Cancel+Dispose+null before replacement. `SkipDiscovery` also resets `IsDiscoverySucceeded = false` to prevent stale state from a previous successful discovery affecting `GoBack` navigation
-- **PersonalNamespaces may be empty**: Some IMAP servers return empty `PersonalNamespaces` and don't support `GetFolder("")` or `GetFoldersAsync` with constructed namespaces. `SyncFoldersCoreAsync` falls back to `client.Inbox` as the sole folder — guaranteed by IMAP spec
+- **Defensive folder discovery (Thunderbird-style)**: `DiscoverFoldersAsync` uses a 4-strategy cascade: (1) standard namespace, (2) constructed default namespace `("", "/")`, (3) root folder recursive enumeration (depth limit 10), (4) INBOX only. Strategy 1 is wrapped in try/catch so failures fall through to defensive strategies. `EnsureInboxIncluded` always guarantees INBOX in results. All exception filters preserve `OperationCanceledException` propagation
 
 ## 2FA / TOTP
 
