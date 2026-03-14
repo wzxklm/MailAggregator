@@ -35,12 +35,12 @@
 
 ## Mail (Connection / Sync / Send)
 
-- 🔴 **Reflection-based folder injection**: `EmailSyncService` injects root folder into MailKit's internal `ImapEngine.FolderCache` via reflection for NIL NAMESPACE servers. Breaks if MailKit changes internal API. Fallback strategies exist but are less reliable
+- 🔴 **Reflection-based folder injection**: `ImapFolderDiscovery` injects root folder into MailKit's internal `ImapEngine.FolderCache` via reflection for NIL NAMESPACE servers. Breaks if MailKit changes internal API. Fallback strategies exist but are less reliable
 - 🔴 **UIDVALIDITY reset destroys messages**: When server changes UIDVALIDITY (maintenance, migration), all local folder messages are bulk-deleted and re-synced. Correct per RFC but destructive
 - 🔴 **Token refresh semaphore leak**: `_tokenRefreshLocks` in `MailConnectionHelper` accumulates per-account semaphores. `RemoveTokenRefreshLock()` must be called on account deletion (done in `AccountService.DeleteAccountAsync`). Missing this call leaks memory
 - 🔴 **OAuth expiry uses local clock**: `DateTimeOffset.UtcNow` compared to token expiry. Auth failures if client clock is behind server by more than 60s grace period
 - **Per-folder sync locks**: Must acquire per-folder semaphore before syncing. Without it, concurrent sync causes `(FolderId, Uid)` UNIQUE constraint violation
-- **IOException retry**: Pooled connections retry once on IOException (dead socket). No exponential backoff between retries — assumes fresh connection succeeds
+- **IOException retry**: Pooled connections retry once on IOException (dead socket) in both `EmailSyncService` and `EmailOperationService`. No exponential backoff between retries — assumes fresh connection succeeds
 - **Sent folder append non-fatal**: If appending sent email to Sent folder fails (missing folder, network error), logs warning and continues. User sees email sent but no local Sent copy
 - **Forward without original**: If fetching original message fails during forward, silently proceeds without original attachments/body
 

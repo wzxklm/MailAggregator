@@ -2,7 +2,15 @@
 
 ## Overview
 
-Orchestrates the main UI: loads accounts and folder trees from DB, manages email list with unified inbox and per-folder views, handles sync events, and launches all secondary windows (Compose, AccountList, TwoFactor). Implements `IDisposable` to unsubscribe from `SyncManager` events and cancel in-flight operations.
+Orchestrates the main UI: loads accounts and folder trees from DB, manages email list with unified inbox and per-folder views, handles sync events, and launches all secondary windows (Compose, AccountList, TwoFactor). Split into two partial class files for readability. Implements `IDisposable` to unsubscribe from `SyncManager` events and cancel in-flight operations.
+
+## File Structure
+
+| File | Content |
+|------|---------|
+| `MainViewModel.cs` | Fields, constructor, `Dispose`, `InitializeAsync`, `LoadAccountsAsync`, compose/reply/forward commands, settings/log/2FA commands, helper methods |
+| `MainViewModel.EmailList.cs` | `SelectFolderAsync`, `ShowUnifiedInboxAsync`, `FilterByAccountAsync`, `LoadEmailsForCurrentViewAsync`, `MarkAsReadAsync`, `DeleteMessageAsync`, `OnSelectedEmailChanged`, `LoadFullMessageAndMarkReadAsync`, event handlers (`OnNewEmailsReceived`, `OnFoldersSynced`, `InsertNewEmailsAsync`) |
+| `AccountFolderNode.cs` | Separate class: folder tree node with `DisplayName`, `UnreadCount`, `Account`, `Folder`, `IsAccount`, `Children` |
 
 ## Key Behaviors
 
@@ -16,6 +24,7 @@ Orchestrates the main UI: loads accounts and folder trees from DB, manages email
 - **Account reload cancellation**: Opening account settings cancels any in-flight `LoadAccountsAsync` to abort stale IMAP connections (e.g. using old proxy settings)
 - **Log level toggle**: `CycleLogLevel` switches Serilog between INFO and DEBUG at runtime via `LoggingLevelSwitch`
 - **Message limit**: Email list capped at 200 messages per view
+- **Service separation**: Uses `IEmailSyncService` for folder/message sync operations and `IEmailOperationService` for single-message operations (mark read, delete, fetch body)
 
 ## Interface
 
@@ -26,8 +35,6 @@ Key commands: `LoadAccountsCommand`, `SelectFolderCommand`, `ShowUnifiedInboxCom
 Key properties: `FolderTree`, `Emails`, `SelectedEmail`, `SelectedFolder`, `SelectedFilterAccount`, `Accounts`, `StatusText`, `IsSyncing`, `LogLevel`
 
 ## Internal Details
-
-**AccountFolderNode** (nested class in same file): Tree node with `DisplayName`, `UnreadCount`, `Account`, `Folder`, `IsAccount` flag, and `Children` collection. Account-level nodes have `IsAccount=true`; folder-level nodes have `Folder` set.
 
 **Concurrency**: Two `CancellationTokenSource` fields:
 - `_folderSwitchCts` — cancelled on each folder selection to abort previous folder's sync
@@ -62,7 +69,7 @@ Key properties: `FolderTree`, `Emails`, `SelectedEmail`, `SelectedFolder`, `Sele
 - DB: `MailAggregatorDbContext` (scoped) + `IDbContextFactory` (singleton)
 - Auth: `DpapiKeyProtector`, `CredentialEncryptionService`, `PasswordAuthService`, `OAuthService`
 - Connection: `ImapConnectionService`, `ImapConnectionPool`, `SmtpConnectionService`
-- Mail: `EmailSyncService` (scoped), `EmailSendService` (scoped)
+- Mail: `EmailSyncService` (scoped), `EmailOperationService` (scoped), `EmailSendService` (scoped)
 - Account: `AccountService` (scoped)
 - 2FA: `TwoFactorCodeService` (singleton), `TwoFactorAccountService` (scoped)
 - Sync: `SyncManager` (singleton)
@@ -73,5 +80,5 @@ Key properties: `FolderTree`, `Emails`, `SelectedEmail`, `SelectedFolder`, `Sele
 
 ## Dependencies
 
-- Uses: `IAccountService`, `IEmailSyncService`, `ISyncManager`, `ILogger`, `MailAggregatorDbContext`, `NotificationHelper`
+- Uses: `IAccountService`, `IEmailSyncService`, `IEmailOperationService`, `ISyncManager`, `ILogger`, `MailAggregatorDbContext`, `NotificationHelper`
 - Used by: `MainWindow` (DataContext)

@@ -93,7 +93,7 @@ SyncManager.StartAccountSyncAsync(account)
 │
 ├── First Connection (no folders in DB)
 │   └── EmailSyncService.SyncFoldersAsync(account, client)
-│       ├── 4-tier folder discovery:
+│       ├── ImapFolderDiscovery.DiscoverFoldersAsync — 4-tier cascade:
 │       │   ├── (1) PersonalNamespaces[0].GetSubfolders()
 │       │   ├── (2) Default namespace + reflection-inject root into FolderCache
 │       │   ├── (3) Root folder GetSubfolders(subscribedOnly: false)
@@ -200,7 +200,7 @@ User clicks folder in tree
 User selects email in list
 ├── MainViewModel.LoadFullMessageAndMarkReadAsync()
 │   ├── If body not cached (BodyHtml/BodyText null) OR contains unresolved cid:
-│   │   └── EmailSyncService.FetchMessageBodyAsync(account, message)
+│   │   └── EmailOperationService.FetchMessageBodyAsync(account, message)
 │   │       ├── Get pooled IMAP connection (retry once on IOException)
 │   │       ├── FETCH full message by UID
 │   │       ├── Extract BodyHtml, BodyText, PreviewText
@@ -209,7 +209,7 @@ User selects email in list
 │   │       └── Save to DB
 │   │
 │   ├── Mark as read (if unread):
-│   │   ├── EmailSyncService.SetMessageReadAsync()
+│   │   ├── EmailOperationService.SetMessageReadAsync()
 │   │   │   └── IMAP: AddFlagsAsync(\Seen) → update DB IsRead=true
 │   │   └── Update folder unread count in UI
 │   │

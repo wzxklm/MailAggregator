@@ -104,6 +104,7 @@ public partial class App : System.Windows.Application
 
         // Mail services
         services.AddScoped<IEmailSyncService, EmailSyncService>();
+        services.AddScoped<IEmailOperationService, EmailOperationService>();
         services.AddScoped<IEmailSendService, EmailSendService>();
 
         // Account management

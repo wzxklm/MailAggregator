@@ -11,7 +11,7 @@ WPF desktop email client aggregating multiple IMAP accounts with OAuth2/password
 | Stack    | C# / .NET 8 / WPF / MailKit / EF Core SQLite / Serilog / CommunityToolkit.Mvvm |
 | Arch     | MVVM + Dependency Injection (Microsoft.Extensions.DependencyInjection) |
 | Platform | Windows x64 (self-contained) |
-| Tests    | xUnit 2.5.3 + Moq + FluentAssertions — 235+ tests in `src/MailAggregator.Tests/` |
+| Tests    | xUnit 2.5.3 + Moq + FluentAssertions — 237 tests in `src/MailAggregator.Tests/` |
 | Build    | `dotnet build MailAggregator.sln` |
 | Test Cmd | `dotnet test src/MailAggregator.Tests/MailAggregator.Tests.csproj` |
 
@@ -29,7 +29,7 @@ WPF desktop email client aggregating multiple IMAP accounts with OAuth2/password
 │   │   │   ├── AccountManagement/       # Account CRUD (AccountService)
 │   │   │   ├── Auth/                    # Encryption, password, OAuth, key protectors
 │   │   │   ├── Discovery/              # IMAP/SMTP auto-discovery (6-level fallback)
-│   │   │   ├── Mail/                   # IMAP/SMTP connection, pooling, sync, send
+│   │   │   ├── Mail/                   # IMAP/SMTP connection, pooling, sync, send, message ops
 │   │   │   ├── Sync/                   # SyncManager — background IDLE/polling orchestration
 │   │   │   └── TwoFactor/             # TOTP code generation & account management
 │   │   └── oauth-providers.json        # OAuth provider configuration (Google, Microsoft, etc.)
@@ -37,7 +37,7 @@ WPF desktop email client aggregating multiple IMAP accounts with OAuth2/password
 │   ├── MailAggregator.Desktop/          # WPF UI layer (net8.0-windows)
 │   │   ├── App.xaml(.cs)               # Entry point, DI container setup
 │   │   ├── MainWindow.xaml(.cs)        # Main window: email list, folder tree, WebView2 preview
-│   │   ├── ViewModels/                 # MVVM ViewModels (MainVM, AccountListVM, ComposeVM, 2FA VMs)
+│   │   ├── ViewModels/                 # MVVM ViewModels (MainVM split into partials, AccountListVM, ComposeVM, 2FA VMs)
 │   │   ├── Views/                      # Dialog windows (AddAccount, Compose, TwoFactor, etc.)
 │   │   ├── Converters/                 # XAML value converters
 │   │   └── Resources/Styles.xaml       # Global WPF styles
@@ -74,7 +74,8 @@ WPF desktop email client aggregating multiple IMAP accounts with OAuth2/password
 │       │         ImapConnectionPool    SmtpConnectionSvc  │
 │       │              │                       │           │
 │       ▼              ▼                       ▼           │
-│  EmailSyncService                    EmailSendService    │
+│  EmailSyncService ──→ ImapFolderDiscovery                │
+│  EmailOperationService               EmailSendService    │
 │                                                          │
 │  TwoFactorAccountSvc ──→ TwoFactorCodeSvc               │
 │         │                                                │
@@ -97,10 +98,10 @@ WPF desktop email client aggregating multiple IMAP accounts with OAuth2/password
 | Component | Affects |
 |-----------|---------|
 | `CredentialEncryptionService` | PasswordAuthService, OAuthService, MailConnectionHelper, TwoFactorAccountService, ImapConnectionService, SmtpConnectionService |
-| `MailAggregatorDbContext` | AccountService, EmailSyncService, EmailSendService, ImapConnectionService, SmtpConnectionService, TwoFactorAccountService, MainViewModel |
+| `MailAggregatorDbContext` | AccountService, EmailSyncService, EmailOperationService, EmailSendService, ImapConnectionService, SmtpConnectionService, TwoFactorAccountService, MainViewModel |
 | `MailConnectionHelper` | ImapConnectionService, SmtpConnectionService, SyncManager (shared retry/auth/token-refresh logic) |
 | `ImapConnectionService` | ImapConnectionPool, SyncManager, EmailSendService (Sent folder append) |
-| `ImapConnectionPool` | EmailSyncService, AccountService (cleanup on delete) |
+| `ImapConnectionPool` | EmailSyncService, EmailOperationService, AccountService (cleanup on delete) |
 | `Account` model | All services and ViewModels — central entity |
 
 ## Chapters

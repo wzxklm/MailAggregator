@@ -7,7 +7,9 @@
 | `src/MailAggregator.Desktop/App.xaml.cs` | [main-viewmodel.md](main-viewmodel.md) | DI container setup, DB init, Serilog config, app lifecycle |
 | `src/MailAggregator.Desktop/App.xaml` | [infrastructure.md](infrastructure.md) | Merges ModernWpf theme + `Styles.xaml` resource dictionary |
 | `src/MailAggregator.Desktop/MainWindow.xaml.cs` | [main-viewmodel.md](main-viewmodel.md) | Main window code-behind: WebView2 email preview, folder tree, minimize-to-tray |
-| `src/MailAggregator.Desktop/ViewModels/MainViewModel.cs` | [main-viewmodel.md](main-viewmodel.md) | Central VM: folder tree, email list, sync orchestration, dialog launchers |
+| `src/MailAggregator.Desktop/ViewModels/MainViewModel.cs` | [main-viewmodel.md](main-viewmodel.md) | Central VM core: fields, constructor, account loading, commands, dialog launchers |
+| `src/MailAggregator.Desktop/ViewModels/MainViewModel.EmailList.cs` | [main-viewmodel.md](main-viewmodel.md) | Central VM partial: email list, folder selection, unified inbox, event handlers |
+| `src/MailAggregator.Desktop/ViewModels/AccountFolderNode.cs` | [main-viewmodel.md](main-viewmodel.md) | Folder tree node model: DisplayName, UnreadCount, Account, Folder, Children |
 | `src/MailAggregator.Desktop/ViewModels/AccountListViewModel.cs` | [account-viewmodels.md](account-viewmodels.md) | Account list CRUD, toggle IDLE/polling |
 | `src/MailAggregator.Desktop/ViewModels/AddAccountViewModel.cs` | [account-viewmodels.md](account-viewmodels.md) | Multi-step wizard: discovery, auth (password/OAuth), server config |
 | `src/MailAggregator.Desktop/ViewModels/ComposeViewModel.cs` | [compose-viewmodel.md](compose-viewmodel.md) | Compose/reply/forward email, attachments, send via SMTP |
