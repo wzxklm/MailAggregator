@@ -4,106 +4,72 @@
 
 ---
 
-## EF Core / Database
+## Core Data (EF Core / SQLite)
 
-- **DbContext not thread-safe**: Use `ToListAsync()`, never `Task.Run(() => query.ToList())`. Background services use `IDbContextFactory`; UI-layer scoped services inject directly
-- **Concurrency conflicts**: Entity from one DbContext cannot Attach to another. `SaveChangesSafeAsync()` handles this (detach + retry) and SQLite UNIQUE violations (error 19, detach Added + retry)
-- **No concurrent sync on same folder**: `EmailSyncService` uses per-folder `SemaphoreSlim` (`_folderSyncLocks`). Locks in public methods; `*CoreAsync` are lock-free
-- **UIDVALIDITY must call CoreAsync**: `SyncIncrementalCoreAsync` on UIDVALIDITY change must call `SyncInitialCoreAsync` (not public `SyncInitialAsync`) to avoid SemaphoreSlim deadlock. Also reuses caller's ImapClient (pool max 2)
-- **Check ChangeTracker before Attach**: After save, entities remain tracked. Attach on same Id throws. Fix: query `ChangeTracker.Entries<T>()` dict first — update tracked entity directly or Attach new stub. See `SetMessageReadAsync`, `FetchMessageBodyAsync`, `SyncFlagsAndDetectDeletionsAsync`
-- **Avoid `Update()` cascade**: `Update(folder)` cascades to `Messages` nav property causing conflicts. Use `Attach` + `Property(...).IsModified = true`
-- **Batch saves**: Save every 50 items during bulk sync
-- **New entities need manual table creation**: `EnsureCreatedAsync()` only works for new DBs. Add `ExecuteSqlRawAsync("CREATE TABLE IF NOT EXISTS ...")` in `DatabaseInitializer.InitializeAsync`. Types: `DateTimeOffset` → `INTEGER` (UTC ticks), enums → `INTEGER`
-- **Schema migration catch must be narrowed**: `ALTER TABLE ... ADD COLUMN` throws `SqliteException` if the column exists. Catch only when `ex.SqliteErrorCode == 1` (SQLITE_ERROR). A broad `catch (SqliteException)` would silently swallow I/O and corruption errors
-- **New timestamped entities**: Add `ChangeTracker.Entries<T>()` loop in `StampTimestamps()` for `CreatedAt`/`UpdatedAt` auto-population
+- **DateTimeOffset storage**: SQLite lacks native `DateTimeOffset`; all properties converted to UTC ticks (`long`) via `DateTimeOffsetToLongConverter`. Transparent but means raw SQL queries must use tick values, not date strings
+- **Timestamp auto-stamping**: `SaveChanges`/`SaveChangesAsync` auto-sets `CreatedAt`/`UpdatedAt` on Account and TwoFactorAccount, `CachedAt` on EmailMessage. Do not set these manually
+- 🔴 **Entity tracking conflicts**: Root-scoped `DbContext` in `AccountService` can track stale entities. Always use `AsNoTracking()` for reads; explicitly detach + re-fetch before updates/deletes to avoid `DbUpdateConcurrencyException`
+- 🔴 **Cascade delete + disk files**: Deleting an Account cascades DB rows (Folders → Messages → Attachments), but attachment files on disk must be deleted manually first. `AccountService.DeleteAccountAsync()` handles this but partial failure leaves orphaned files
+- **Unique constraints**: `(AccountId, FullName)` on folders, `(FolderId, Uid)` on messages. Violating these throws `SqliteException` (error code 19)
 
-## MailKit / Mail Protocol
+## Authentication & Encryption
 
-- **Naming conflict — MailFolder**: `MailKit.MailFolder` vs `Models.MailFolder` → use `using LocalMailFolder = MailAggregator.Core.Models.MailFolder`
-- **Naming conflict — Account**: `Services.AccountManagement` namespace → use `using LocalAccount = MailAggregator.Core.Models.Account`
-- **IMAP ID (RFC 2971) before auth**: 163.com/Coremail requires `IdentifyAsync` before login. Only send when `ImapCapabilities.Id` present; failure is non-fatal (log and swallow)
-- **IMAP IDLE needs dedicated connection**: IDLE occupies connection. Pool max 2 per account
-- **IDLE timeout**: 29min (RFC 2177 < 30min). Reopen folder before re-entering IDLE
-- **MailKit `IdleAsync` does not auto-return on new mail**: `IdleAsync(doneToken, ct)` only exits when `doneToken` is cancelled — server EXISTS notifications update `folder.Count` internally but do NOT break out of IDLE. Must subscribe to `folder.CountChanged` and cancel the done token in the handler, otherwise IDLE blocks for the full timeout (29min) even when mail arrives
-- **Validate pooled connections**: Check `IsConnected && IsAuthenticated` before reuse; release stale ones
-- **Microsoft "not connected" non-transient error**: `IsNonTransientAuthError` detects this. `ImapConnectionService` retry loop rethrows immediately
-- **MimeKit TryParse doesn't validate format**: Accepts bare numbers without domain. Use `ParseAndValidateAddresses` to verify `local@domain` before SMTP send
+- 🔴 **DevKeyProtector is NO-OP**: Returns data unchanged — zero encryption. Only for dev/test on Linux. Never use in production; credentials stored in plaintext on disk
+- **AES-256-GCM format**: Encrypted data = Base64(12-byte nonce + ciphertext + 16-byte tag). Do not modify format without updating both Encrypt and Decrypt
+- **Memory zeroing**: `CredentialEncryptionService` zeros plaintext buffers with `CryptographicOperations.ZeroMemory`. Maintain this pattern for any new encryption code
+- **DPAPI scope**: `DpapiKeyProtector` uses `DataProtectionScope.CurrentUser`. Master key is user-bound — cannot decrypt on another Windows account or machine
+- 🔴 **Orphaned OAuth listeners**: Abandoned OAuth flows (user cancels) leave `HttpListener` resources. Cleaned up on next `PrepareAuthorization()` call, not on timeout/crash
+- **OAuth scope reduction**: If provider grants fewer scopes than requested (e.g., Microsoft omits `offline_access`), OAuthService logs warning but proceeds. Token refresh may fail silently later
+- **Token refresh serialization**: Per-account semaphore prevents IMAP + SMTP from refreshing simultaneously — providers like Google invalidate old tokens on concurrent refresh
 
-## OAuth
+## Account Management
 
-- **PKCE per-provider**: `usePKCE` in `oauth-providers.json` — do not hardcode
-- **RedirectionEndpoint per-provider**: Yahoo/AOL require fixed redirect URI → use `redirectionEndpoint` field
-- **Persist RefreshToken immediately after refresh**: `PersistRefreshedTokenAsync` — old token invalidated on refresh
-- **Token refresh grace period**: 60s before expiry (`TokenRefreshGracePeriod`)
-- **Token refresh concurrency**: Per-account `SemaphoreSlim` + double-check in `MailConnectionHelper`. On account delete, call `RemoveTokenRefreshLock`
-- **invalid_grant not retryable**: `OAuthReauthenticationRequiredException` → `SyncManager` breaks sync loop. User must re-authorize
-- **OAuth detection driven by ViewModel**: `AddAccountAsync` takes explicit `authType` from ViewModel. Do not override in AccountService — causes "OAuth2 but no token" bug
+- 🔴 **OAuth token atomicity gap**: Account saved to DB before OAuth token exchange completes (exchange happens in UI post-save). If token exchange fails, account exists without tokens — unusable until re-auth
+- **Concurrent update safety**: `UpdateAccountAsync` and `DeleteAccountAsync` detach tracked entities and re-fetch to prevent concurrency exceptions from long-lived DbContext
 
-## WPF / UI
+## Server Discovery
 
-- **Styles in `Resources/Styles.xaml` only**: No styles/converters in individual Window files
-- **Unsubscribe singleton events**: ViewModels subscribing to events like `SyncManager.NewEmailsReceived` / `FoldersSynced` must `IDisposable` + unsubscribe, else memory leak
-- **UI thread updates**: ObservableCollection changes from background → `Dispatcher.Invoke()`
-- **Per-account error isolation**: Multi-account loops must try/catch per account (one failure must not block others)
-- **`UseWindowsForms=true` required**: NotifyIcon depends on WinForms
-- **WinForms type ambiguity**: `MessageBox`, `Clipboard` exist in both namespaces. Use `System.Windows.MessageBox.Show()`, `System.Windows.Clipboard.SetText()` (CS0104)
-- **`BoolToVisibilityConverter` for Visibility only**: Returns `Visibility` enum, not for `bool?` bindings like `RadioButton.IsChecked`
-- **ModernWpf styles by key**: Reference base styles as `BasedOn="{StaticResource AccentButtonStyle}"`, `DefaultButtonStyle`, `DefaultListBoxItemStyle` — not by TargetType
-- **Use semantic color resources**: Use `SuccessBackgroundBrush`, `ErrorBackgroundBrush`, `InfoBackgroundBrush`, `SubtleBrush`, `CardBrush`, `CardBorderBrush` instead of hardcoding hex colors
-- **Icon buttons use Segoe MDL2 Assets**: Use separate `TextBlock` elements for icon (FontFamily="Segoe MDL2 Assets") and label text — do not mix FontFamily in one element
-- **`FallbackValue=Collapsed` for optional bindings**: When binding to a property that may not exist on the DataContext (e.g. `UnreadCount` on `AccountFolderNode`), add `FallbackValue=Collapsed` — otherwise WPF passes `DependencyProperty.UnsetValue` (not null) to converters, causing unexpected visibility
-- **Minimize-to-tray close guard**: `MainWindow.OnClosing` must check `NotificationHelper.IsExitRequested` — without it, the app becomes unkillable (close always hides). Tray Exit sets flag before `Application.Current.Shutdown()`
-- **Embedded resource naming**: `GetManifestResourceStream` uses `{AssemblyName}.{Path.With.Dots}` — e.g. `Resources\app.ico` → `"MailAggregator.Desktop.Resources.app.ico"`. Folder separators become dots
+- **ccSLD hardcoding**: `TwoLevelTlds` static set (40+ entries: co.uk, com.br, etc.) is manually maintained. New country-code SLDs require code update; no heuristic fallback
+- **Malformed XML silent failure**: `ParseAutoconfigXml()` returns null on XML parse errors. Bad autoconfig XML from a server looks identical to "no config found"
+- **10-second timeouts stack**: Each discovery level can take up to 10s (DNS/HTTP). Worst case: 6 levels × 10s = 60s total discovery time
 
-## Mail Discovery & Sync
+## Mail (Connection / Sync / Send)
 
-- **MX domain extraction handles ccSLDs**: `co.uk`, `com.au` → extract 3rd-level domain via `TwoLevelTlds` HashSet
-- **DNS via DnsClient.NET**: `ILookupClient` (injectable). 10s timeout
-- **SRV discovery (Level 5)**: `_imaps._tcp`→`_imap._tcp`→`_submission._tcp`; SMTP SRV in parallel
-- **Pass `manualConfig` to skip redundant discovery**: ViewModel already has config → pass via `manualConfig`, else AccountService re-runs discovery
-- **Account deletion cleanup order**: `StopAccountSyncAsync` → `RemoveAccount` (pool) → `RemoveTokenRefreshLock` → delete attachments → delete DB
-- **Detach tracked Account before Update/Delete**: Root DbContext may track stale entity. Update: detach via `ChangeTracker.Entries<Account>()`. Delete: `Detached` → re-fetch → `Remove(freshAccount)`
-- **Account update restarts sync**: Validates host/port, then stop → remove pool → restart if syncing
-- **Per-account IDLE toggle**: `Account.UseIdle` (default true). SyncManager checks `account.UseIdle && ImapCapabilities.Idle` — when false, always polls. Toggled via AccountListViewModel `ToggleIdleCommand` → `UpdateAccountAsync` (restarts sync)
-- **IDLE fallback with permanent degradation**: Check `ImapCapabilities.Idle`. No IDLE → 59s polling. IDLE rejection (`ImapCommandException`) → poll delay + increment failure counter; 2 consecutive failures → permanently switch to polling for that connection session. `StatusAsync(StatusItems.Count)` always sent after both IDLE and poll cycles — uses STATUS instead of NOOP because some servers (e.g. 163.com) treat NOOP-only sessions as idle and auto-logout; also provides authoritative message count for servers that don't reliably push EXISTS (e.g. QQ Mail)
-- **Folder loading: DB-first, IMAP only once**: Folders are synced from IMAP only on first account connection (when DB has no folders). After that, folders are always read from the local database via `GetFoldersFromDbAsync`. `MainViewModel.LoadAccountsAsync` and `SyncManager.AccountSyncLoopAsync` both use DB reads — no IMAP connection needed for folder loading after initial sync
-- **Dead pooled connections — IOException retry**: Pooled connections may appear alive (`IsConnected=true`) but have dead TCP sockets (silently dropped by firewall/NAT). `SyncFoldersAsync`, `SyncIncrementalAsync` and `FetchMessageBodyAsync` retry once on `IOException` — first failure disposes the bad connection, retry gets a fresh one
-- **Expired OAuth tokens in pool**: `GetConnectionAsync` checks `account.OAuthTokenExpiry` before reusing a pooled connection. Expired → discard and create fresh connection (triggers token refresh in `ConnectAsync`). Without this, servers reject with `ImapProtocolException: Session invalidated - AccessTokenExpired`
-- **Merged flag sync + deletion**: `SyncFlagsAndDetectDeletionsAsync` — single FETCH (missing UIDs = deleted)
-- **Pool cleanup timer**: 5min `Timer` removes zombie connections (NAT/mobile silent TCP drops)
-- **Pool size atomic tracking**: `_poolCounts` `AddOrUpdate` prevents exceeding limit
-- **Backoff jitter**: ±25% (`JitterFactor=0.25`) prevents thundering herd
-- **Network-aware reconnection**: `ManualResetEventSlim` (`_networkAvailable`): wait when down, immediate reconnect (reset attempt=0) on restore. Use `_networkAvailable.IsSet` directly
-- **AutoDiscovery cancels on first success**: L1-3 parallel → first success → `CancelAsync()` others
-- **Discovery skip CancellationTokenSource lifecycle**: `AddAccountViewModel._discoveryCts` must be Cancel+Dispose+null before replacement. `SkipDiscovery` also resets `IsDiscoverySucceeded = false` to prevent stale state from a previous successful discovery affecting `GoBack` navigation
-- **Defensive folder discovery (Thunderbird-style)**: `DiscoverFoldersAsync` uses a 4-strategy cascade: (1) standard namespace, (2) constructed default namespace `("", "/")`, (3) root folder recursive enumeration (depth limit 10), (4) INBOX only. Strategy 1 is wrapped in try/catch so failures fall through to defensive strategies. `EnsureInboxIncluded` always guarantees INBOX in results. All exception filters preserve `OperationCanceledException` propagation
-- **MailKit FolderCache reflection injection for NAMESPACE NIL servers**: When a server returns `NAMESPACE NIL NIL NIL`, MailKit's `ImapEngine.FolderCache` is never seeded with the root folder key `""`. `GetFoldersAsync` then throws `FolderNotFoundException` inside `QueueGetFoldersCommand` (cache-check phase) **before** sending any `LIST` command — both Strategy 1 and 2 fail this way. Fix: call `TryInjectRootFolderCache(client)` before the strategy cascade. It uses reflection to call `ImapEngine.CreateImapFolder("", FolderAttributes.None, separator)` and `CacheFolder(rootFolder)`, then appends `new FolderNamespace(separator, "")` to `client.PersonalNamespaces`. Entire method is wrapped in `try/catch` — any reflection failure silently falls through to existing strategies. Targets MailKit 4.15.1 internals; re-check field/method names on MailKit upgrades
+- 🔴 **Reflection-based folder injection**: `EmailSyncService` injects root folder into MailKit's internal `ImapEngine.FolderCache` via reflection for NIL NAMESPACE servers. Breaks if MailKit changes internal API. Fallback strategies exist but are less reliable
+- 🔴 **UIDVALIDITY reset destroys messages**: When server changes UIDVALIDITY (maintenance, migration), all local folder messages are bulk-deleted and re-synced. Correct per RFC but destructive
+- 🔴 **Token refresh semaphore leak**: `_tokenRefreshLocks` in `MailConnectionHelper` accumulates per-account semaphores. `RemoveTokenRefreshLock()` must be called on account deletion (done in `AccountService.DeleteAccountAsync`). Missing this call leaks memory
+- 🔴 **OAuth expiry uses local clock**: `DateTimeOffset.UtcNow` compared to token expiry. Auth failures if client clock is behind server by more than 60s grace period
+- **Per-folder sync locks**: Must acquire per-folder semaphore before syncing. Without it, concurrent sync causes `(FolderId, Uid)` UNIQUE constraint violation
+- **IOException retry**: Pooled connections retry once on IOException (dead socket). No exponential backoff between retries — assumes fresh connection succeeds
+- **Sent folder append non-fatal**: If appending sent email to Sent folder fails (missing folder, network error), logs warning and continues. User sees email sent but no local Sent copy
+- **Forward without original**: If fetching original message fails during forward, silently proceeds without original attachments/body
 
-## 2FA / TOTP
+## Sync Manager
 
-- **`FindAsync` for PK lookups**: Checks ChangeTracker first → avoids tracked-entity conflicts. Used in `UpdateAsync`/`DeleteAsync`
-- **Normalize secrets `ToUpperInvariant()`**: Base32 case-insensitive; normalize before validation/encryption. `ParseOtpAuthUri` also normalizes
-- **Zero secret bytes after use**: `CryptographicOperations.ZeroMemory` in `try/finally`
+- **STATUS vs NOOP**: Must use STATUS (not NOOP) to reset server idle timer — see `chapters/sync.md` for details
+- **IDLE 29-min timeout**: Connection resets every 29min per RFC 2177 — do not increase
+- **Permanent polling fallback**: Permanently switches to polling after consecutive IDLE rejections. Restart account sync to retry IDLE
+- **Network detection coarse-grained**: `NetworkChange` events fire on any network state change (including LAN). May cause premature reconnect signals
+- **Per-folder lock accumulation**: `_folderSyncLocks` in `EmailSyncService` never cleaned up when folders deleted. Long-running app accumulates unused semaphores
+
+## Two-Factor (TOTP)
+
+- **No recovery for deleted accounts**: 2FA accounts permanently removed from DB on delete. No soft-delete or export mechanism
+- **Decryption on-demand**: `GetDecryptedSecret()` decrypts every call. Callers should cache result if needed multiple times per operation
+- **Secret case normalization**: Base32 secrets normalized to uppercase on storage. Transparent but differs from raw URI input
+
+## Desktop (WPF UI)
+
+- 🔴 **PasswordBox code-behind binding**: WPF `PasswordBox.Password` cannot be XAML-bound for security. `AddAccountWindow.xaml.cs` uses code-behind event handler. Password held unencrypted in ViewModel during wizard
+- **Decrypted secrets in memory**: `TwoFactorDisplayItem` holds decrypted TOTP secrets in memory for code generation. Cleared when `TwoFactorViewModel.Dispose()` is called (window close)
+- **WebView2 optional**: If WebView2 runtime not installed, HTML preview unavailable. App logs warning and continues
+- **Dispatcher marshalling required**: All `ISyncManager` events fire on background threads. UI updates must use `Dispatcher.Invoke()` / `InvokeAsync()`. `MainViewModel` handles this correctly — maintain pattern for new event handlers
+- **CancellationTokenSource for stale loads**: `MainViewModel` cancels in-flight folder/message loads when user switches context. Always cancel previous CTS before starting new async operation
 
 ## Architecture Conventions
 
-- **`MailConnectionHelper` centralizes connection logic**: Auth, proxy, encryption mapping, `IsNonTransientAuthError` — do not duplicate or inline
-- **New services**: Register in `App.xaml.cs` + define `I`-prefixed interface
-- **Test structure mirrors Core**: `Tests/Services/` mirrors `Core/Services/` 1:1
-
-## Security
-
-- **Encrypt all sensitive data**: Passwords, tokens → `CredentialEncryptionService` (AES-256-GCM). Never store plaintext
-- **Key protection**: Prod: `DpapiKeyProtector` (CurrentUser). Dev: `DevKeyProtector` (passthrough)
-- **WebView2 hardened**: No scripts, no context menu, block external nav + resources
-- **OAuth state**: `RandomNumberGenerator` random state, verify on callback (CSRF prevention)
-- **DNS via library only**: DnsClient.NET — no external process (no injection risk)
-- **HttpListener cancellation catches two types**: `ObjectDisposedException` or `HttpListenerException` (995) → convert to `OperationCanceledException`
-- **HttpListener cleanup**: `_pendingListeners` cleaned on new OAuth flow (prevent port leaks)
-- **Port TOCTOU**: `StartListenerOnFreePort` binds immediately with retry
-
-## Build & Test
-
-- **Core**: `net8.0` — cross-platform, builds on Linux
-- **Desktop**: `net8.0-windows` — Windows only
-- **Test**: `dotnet test src/MailAggregator.Tests/` — run after every change
+- **DI registration**: All services registered in `App.xaml.cs`. Core services are singleton; `DbContext` uses factory pattern (`IDbContextFactory`) for long-running operations
+- **Interface-first**: Every service has an `I{ServiceName}` interface. Mock via interface in tests
+- **Serilog structured logging**: Use `Log.ForContext<T>()` pattern. Never log decrypted credentials or tokens
+- **Async all the way**: All I/O operations are async. Never use `.Result` or `.Wait()` on tasks
+- **ViewModel dialog pattern**: ViewModels expose `CloseRequested` event. Views subscribe and set `DialogResult`. Modal dialogs use `ShowDialog()`, modeless use `Show()`

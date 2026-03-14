@@ -4,114 +4,116 @@
 
 ## Overview
 
-Windows desktop email client, direct IMAP/SMTP, no backend.
+WPF desktop email client aggregating multiple IMAP accounts with OAuth2/password auth, background IDLE sync, and a built-in TOTP authenticator.
 
-| Key      | Value                                                   |
-| -------- | ------------------------------------------------------- |
-| Stack    | C# / .NET 8 / WPF / ModernWpfUI / MailKit / EF Core SQLite / WebView2 |
-| Arch     | MVVM (CommunityToolkit.Mvvm) + DI                       |
-| Platform | Win x64 (Core cross-platform, Desktop Windows-only)     |
-| Tests    | 237 xUnit                                               |
-
-Providers: Gmail, Microsoft, Yahoo, AOL, Fastmail, any standard IMAP/SMTP.
+| Key      | Value |
+|----------|-------|
+| Stack    | C# / .NET 8 / WPF / MailKit / EF Core SQLite / Serilog / CommunityToolkit.Mvvm |
+| Arch     | MVVM + Dependency Injection (Microsoft.Extensions.DependencyInjection) |
+| Platform | Windows x64 (self-contained) |
+| Tests    | xUnit 2.5.3 + Moq + FluentAssertions — 235+ tests in `src/MailAggregator.Tests/` |
+| Build    | `dotnet build MailAggregator.sln` |
+| Test Cmd | `dotnet test src/MailAggregator.Tests/MailAggregator.Tests.csproj` |
 
 ## Directory Tree
 
 ```
-/workspace/
+/
 ├── MailAggregator.sln
-├── CLAUDE.md
-├── .devcontainer/                                  # Ubuntu 22.04 + CUDA 12.4
-├── .github/workflows/build.yml                     # v* tag → build → test → release
-├── docs-for-ai/
-│   ├── index.md, pitfalls.md, thunderbird-comparison.md
-│   └── chapters/ (core-data, auth, mail, desktop, tests, two-factor, workflows)
-│
-└── src/
-    ├── MailAggregator.Core/                        # net8.0, cross-platform
-    │   ├── oauth-providers.json                    # 5 OAuth providers
-    │   ├── Models/
-    │   │   ├── Account.cs                          # IMAP/SMTP/auth/proxy entity
-    │   │   ├── AuthType.cs                         # Password / OAuth2
-    │   │   ├── ConnectionEncryptionType.cs         # None / Ssl / StartTls
-    │   │   ├── EmailAttachment.cs                  # Attachment metadata
-    │   │   ├── EmailMessage.cs                     # Email entity
-    │   │   ├── MailFolder.cs                       # IMAP folder
-    │   │   ├── OAuthProviderConfig.cs / OAuthTokenResult.cs
-    │   │   ├── OtpAlgorithm.cs                    # Sha1/Sha256/Sha512
-    │   │   ├── ServerConfiguration.cs              # Auto-discovered config
-    │   │   ├── SpecialFolderType.cs                # Inbox/Sent/Drafts/Trash/Junk/Archive
-    │   │   └── TwoFactorAccount.cs                # 2FA TOTP entity
-    │   ├── Data/
-    │   │   ├── MailAggregatorDbContext.cs
-    │   │   └── DatabaseInitializer.cs
-    │   └── Services/
-    │       ├── Auth/                               # AES-256-GCM, DPAPI, Password, OAuth PKCE
-    │       ├── Discovery/AutoDiscoveryService.cs   # 6-level fallback
-    │       ├── Mail/                               # ConnectionHelper, IMAP/SMTP, Pool, Sync, Send
-    │       ├── AccountManagement/AccountService.cs # Account CRUD
-    │       ├── TwoFactor/                          # TOTP code gen + 2FA account CRUD
-    │       └── Sync/SyncManager.cs                 # IMAP IDLE background sync
-    │
-    ├── MailAggregator.Desktop/                     # net8.0-windows
-    │   ├── App.xaml(.cs)                           # DI, Serilog, lifecycle
-    │   ├── MainWindow.xaml(.cs)                    # 3-pane + WebView2
-    │   ├── Resources/Styles.xaml, app.ico          # styles + embedded app icon
-    │   ├── ViewModels/                             # Main, AddAccount, AccountList, Compose, TwoFactor*, NotificationHelper
-    │   ├── Views/                                  # AddAccount, AccountList, Compose, TwoFactor, AddTwoFactor
-    │   └── Converters/                             # BoolToFontWeight, BoolToVisibility, NullToVisibility, FileSize
-    │
-    └── MailAggregator.Tests/                       # 237 xUnit tests
-        ├── Data/MailAggregatorDbContextTests.cs                        # [6]
-        └── Services/
-            ├── Auth/{Credential,Password,OAuth}ServiceTests.cs         # [8+15+35]
-            ├── Discovery/AutoDiscoveryServiceTests.cs                   # [35]
-            ├── Mail/{EmailSync,ImapConnection,EmailSend}ServiceTests.cs # [9+4+29]
-            ├── AccountManagement/AccountServiceTests.cs                 # [22]
-            ├── TwoFactor/{TwoFactorCodeService,TwoFactorAccountService}Tests.cs # [23+21]
-            └── Sync/SyncManagerTests.cs                                 # [30]
+├── .github/workflows/build.yml          # Tag-triggered CI/CD (v* tags only)
+├── src/
+│   ├── MailAggregator.Core/             # Cross-platform core library (net8.0)
+│   │   ├── Data/                        # EF Core DbContext, DatabaseInitializer
+│   │   ├── Models/                      # Account, EmailMessage, MailFolder, TwoFactorAccount, enums
+│   │   ├── Services/
+│   │   │   ├── AccountManagement/       # Account CRUD (AccountService)
+│   │   │   ├── Auth/                    # Encryption, password, OAuth, key protectors
+│   │   │   ├── Discovery/              # IMAP/SMTP auto-discovery (6-level fallback)
+│   │   │   ├── Mail/                   # IMAP/SMTP connection, pooling, sync, send
+│   │   │   ├── Sync/                   # SyncManager — background IDLE/polling orchestration
+│   │   │   └── TwoFactor/             # TOTP code generation & account management
+│   │   └── oauth-providers.json        # OAuth provider configuration (Google, Microsoft, etc.)
+│   │
+│   ├── MailAggregator.Desktop/          # WPF UI layer (net8.0-windows)
+│   │   ├── App.xaml(.cs)               # Entry point, DI container setup
+│   │   ├── MainWindow.xaml(.cs)        # Main window: email list, folder tree, WebView2 preview
+│   │   ├── ViewModels/                 # MVVM ViewModels (MainVM, AccountListVM, ComposeVM, 2FA VMs)
+│   │   ├── Views/                      # Dialog windows (AddAccount, Compose, TwoFactor, etc.)
+│   │   ├── Converters/                 # XAML value converters
+│   │   └── Resources/Styles.xaml       # Global WPF styles
+│   │
+│   └── MailAggregator.Tests/           # xUnit test suite (net8.0)
+│       ├── Data/                       # DbContext tests
+│       └── Services/                   # Service tests (mirrors Core/Services structure)
 ```
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  WPF UI Layer (MailAggregator.Desktop)                              │
-│  ┌──────────────┐  ┌───────────┐  ┌──────────┐  ┌──────────────┐   │
-│  │ MainWindow   │  │ AddAccount│  │ Compose  │  │ TwoFactor    │   │
-│  │ + ViewModel  │  │ Window+VM │  │ Window+VM│  │ Window + VM  │   │
-│  └──────┬───────┘  └──────┬────┘  └──────┬───┘  └──────┬───────┘   │
-├─────────┼─────────────────┼───────────────────┼─────────┤
-│  Core Service Layer (MailAggregator.Core)                │
-│  ┌──────┴───────┐  ┌──────┴────────┐  ┌──────┴───────┐ │
-│  │ SyncManager  │  │ AccountService│  │EmailSendSvc  │ │
-│  └──────┬───────┘  └──────┬────────┘  └──────┬───────┘ │
-│  ┌──────┴──────────────────┴───────────────────┴──────┐ │
-│  │           EmailSyncService (IMAP Sync)             │ │
-│  └──────────────────────┬─────────────────────────────┘ │
-│  ┌──────────────────────┴─────────────────────────────┐ │
-│  │  ImapConnectionPool ← ImapConnectionService        │ │
-│  │  SmtpConnectionService / MailConnectionHelper      │ │
-│  └──────────────────────┬─────────────────────────────┘ │
-│  ┌─────────────┬────────┴────────┬────────────────────┐ │
-│  │ OAuthService│AutoDiscoverySvc │PasswordAuthService │ │
-│  └──────┬──────┘─────────────────┘────────┬───────────┘ │
-│  ┌──────┴─────────────────────────────────┴───────────┐ │
-│  │  CredentialEncryptionService + KeyProtector         │ │
-│  └────────────────────────────────────────────────────┘ │
-├─────────────────────────────────────────────────────────┤
-│  Data Layer: MailAggregatorDbContext (EF Core + SQLite)  │
+│                    Desktop (WPF UI)                      │
+│  MainWindow ← MainViewModel ← AccountList/Compose/2FA   │
+│       │              │                                   │
+│       ▼              ▼                                   │
+│   WebView2    Dispatcher marshalling                     │
+└──────┬───────────────┬───────────────────────────────────┘
+       │               │
+       ▼               ▼
+┌─────────────────────────────────────────────────────────┐
+│                   Core Services                          │
+│                                                          │
+│  AccountService ──→ AutoDiscoveryService                 │
+│       │                                                  │
+│       ├──→ PasswordAuthService ──→ CredentialEncryption  │
+│       ├──→ OAuthService ─────────→ CredentialEncryption  │
+│       │                                   │              │
+│       ▼                                   ▼              │
+│  SyncManager ──→ ImapConnectionService ← MailConnHelper  │
+│       │              │                       │           │
+│       │              ▼                       ▼           │
+│       │         ImapConnectionPool    SmtpConnectionSvc  │
+│       │              │                       │           │
+│       ▼              ▼                       ▼           │
+│  EmailSyncService                    EmailSendService    │
+│                                                          │
+│  TwoFactorAccountSvc ──→ TwoFactorCodeSvc               │
+│         │                                                │
+│         ▼                                                │
+│  CredentialEncryptionService ──→ IKeyProtector           │
+│                                  (DPAPI / DevProtector)  │
+└──────────────────────┬───────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────┐
+│              Data Layer (EF Core + SQLite)                │
+│  MailAggregatorDbContext ← DatabaseInitializer            │
+│  Models: Account, MailFolder, EmailMessage, Attachment,   │
+│          TwoFactorAccount, ServerConfiguration            │
 └─────────────────────────────────────────────────────────┘
 ```
 
+## Dependency Impact Map
+
+| Component | Affects |
+|-----------|---------|
+| `CredentialEncryptionService` | PasswordAuthService, OAuthService, MailConnectionHelper, TwoFactorAccountService, ImapConnectionService, SmtpConnectionService |
+| `MailAggregatorDbContext` | AccountService, EmailSyncService, EmailSendService, ImapConnectionService, SmtpConnectionService, TwoFactorAccountService, MainViewModel |
+| `MailConnectionHelper` | ImapConnectionService, SmtpConnectionService, SyncManager (shared retry/auth/token-refresh logic) |
+| `ImapConnectionService` | ImapConnectionPool, SyncManager, EmailSendService (Sent folder append) |
+| `ImapConnectionPool` | EmailSyncService, AccountService (cleanup on delete) |
+| `Account` model | All services and ViewModels — central entity |
+
 ## Chapters
 
-| Chapter    | File                    | When to read                              |
-| ---------- | ----------------------- | ----------------------------------------- |
-| Core Data  | `chapters/core-data.md` | Models, DB schema, EF Core                |
-| Auth       | `chapters/auth.md`      | OAuth, encryption, credentials            |
-| Mail       | `chapters/mail.md`      | Connection, sync, send, discovery, acct   |
-| Desktop    | `chapters/desktop.md`   | UI, ViewModels, views, styles             |
-| Tests      | `chapters/tests.md`     | Adding/modifying tests                    |
-| Two-Factor | `chapters/two-factor.md`| 2FA TOTP authenticator                    |
-| Workflows  | `chapters/workflows.md` | End-to-end flow diagrams                  |
+| Chapter | File | When to read |
+|---------|------|--------------|
+| Core Data | `chapters/core-data.md` | Models, DbContext, schema, timestamps, migrations |
+| Auth | `chapters/auth/` | Encryption, passwords, OAuth, key protectors |
+| Account Management | `chapters/account-management.md` | Account CRUD, add/edit/delete flows |
+| Discovery | `chapters/discovery.md` | IMAP/SMTP auto-discovery, DNS, autoconfig XML |
+| Mail | `chapters/mail/` | IMAP/SMTP connections, pooling, sync, send |
+| Sync | `chapters/sync.md` | Background sync, IDLE, polling, reconnection |
+| Two-Factor | `chapters/two-factor.md` | TOTP codes, 2FA account management |
+| Desktop | `chapters/desktop/` | WPF UI, ViewModels, views, converters, DI setup |
+| Tests | `chapters/tests.md` | Test framework, patterns, mocking, running tests |
+| Workflows | `chapters/workflows.md` | Any cross-component task |
