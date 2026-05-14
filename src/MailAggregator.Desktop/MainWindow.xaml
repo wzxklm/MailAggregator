@@ -164,14 +164,14 @@
 
             <!-- Right panel: Email list + Preview -->
             <Grid Grid.Column="2">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="*" MinHeight="120" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="1.5*" MinHeight="150" />
-                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" MinWidth="240" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="1.5*" MinWidth="300" />
+                </Grid.ColumnDefinitions>
 
                 <!-- Email list -->
-                <ListBox Grid.Row="0" ItemsSource="{Binding Emails}"
+                <ListBox Grid.Column="0" ItemsSource="{Binding Emails}"
                          SelectedItem="{Binding SelectedEmail}"
                          BorderThickness="0"
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
@@ -218,12 +218,12 @@
                     </ListBox.ItemTemplate>
                 </ListBox>
 
-                <!-- Horizontal splitter -->
-                <GridSplitter Grid.Row="1" Height="1" HorizontalAlignment="Stretch"
-                              VerticalAlignment="Center" Background="{StaticResource SeparatorBrush}" />
+                <!-- Vertical splitter -->
+                <GridSplitter Grid.Column="1" Width="1" HorizontalAlignment="Center"
+                              VerticalAlignment="Stretch" Background="{StaticResource SeparatorBrush}" />
 
                 <!-- Email preview -->
-                <Border Grid.Row="2">
+                <Border Grid.Column="2">
                     <Grid>
                         <!-- No email selected -->
                         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
