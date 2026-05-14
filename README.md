@@ -6,6 +6,7 @@ Windows desktop email client that aggregates multiple email accounts into a sing
 
 ![Demo1](demo1.png)
 ![Demo2](demo2.png)
+![AI Summary](summary.png)
 
 ## Features
 
@@ -14,6 +15,7 @@ Windows desktop email client that aggregates multiple email accounts into a sing
 - **OAuth 2.0 PKCE** — secure authentication for Gmail, Microsoft, and other OAuth providers
 - **IMAP IDLE** — real-time push notifications for new emails
 - **Compose** — new messages, reply, and forward with attachment support
+- **AI translate & summarize** — one-click translation or summary of any email using any OpenAI-compatible API; configurable base URL, key, model, default language, and prompts; AI output is rendered as markdown directly in the preview pane
 - **2FA Authenticator** — built-in TOTP code generator (like Google Authenticator), secrets encrypted locally
 - **Security** — credentials encrypted with AES-256-GCM, keys protected via DPAPI
 - **Offline storage** — local SQLite database for fast access
