@@ -125,7 +125,25 @@
                               BorderThickness="0" Background="Transparent" Padding="8,0">
                         <TreeView.ItemTemplate>
                             <HierarchicalDataTemplate ItemsSource="{Binding Children}">
-                                <StackPanel Orientation="Horizontal" Margin="0,2">
+                                <StackPanel Orientation="Horizontal" Margin="0,2"
+                                            Tag="{Binding DataContext, RelativeSource={RelativeSource AncestorType=TreeView}}">
+                                    <StackPanel.Style>
+                                        <Style TargetType="StackPanel">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsAccount}" Value="True">
+                                                    <Setter Property="ContextMenu">
+                                                        <Setter.Value>
+                                                            <ContextMenu>
+                                                                <MenuItem Header="Refresh Folders"
+                                                                          Command="{Binding PlacementTarget.Tag.RefreshAccountFoldersCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                                                          CommandParameter="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                                            </ContextMenu>
+                                                        </Setter.Value>
+                                                    </Setter>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </StackPanel.Style>
                                     <TextBlock Text="{Binding DisplayName}" FontSize="13" VerticalAlignment="Center" />
                                     <Border Margin="6,0,0,0" Padding="6,1" CornerRadius="8"
                                             Background="{StaticResource PrimaryBrush}"

@@ -35,7 +35,8 @@
 
 ## Mail (Connection / Sync / Send)
 
-- 🔴 **Reflection-based folder injection**: `ImapFolderDiscovery` injects root folder into MailKit's internal `ImapEngine.FolderCache` via reflection for NIL NAMESPACE servers. Breaks if MailKit changes internal API. Fallback strategies exist but are less reliable
+- **Folder enumeration is minimal**: `EmailSyncService.SyncFoldersCoreAsync` uses `client.PersonalNamespaces[0]` if present, else falls back to `client.Inbox` only. Servers returning NAMESPACE NIL (e.g. seek.li) will only expose INBOX — other folders invisible until user picks a compliant server. Intentional trade-off: simple and crash-free over defensive cascades that still failed on edge cases
+- **Folders cached, only refreshed on demand**: After first sync, folders are read from local DB on every reconnect and never auto-resynced. If user creates/deletes a folder via another client, right-click the account node in the folder tree → "Refresh Folders" to re-enumerate
 - 🔴 **UIDVALIDITY reset destroys messages**: When server changes UIDVALIDITY (maintenance, migration), all local folder messages are bulk-deleted and re-synced. Correct per RFC but destructive
 - 🔴 **Token refresh semaphore leak**: `_tokenRefreshLocks` in `MailConnectionHelper` accumulates per-account semaphores. `RemoveTokenRefreshLock()` must be called on account deletion (done in `AccountService.DeleteAccountAsync`). Missing this call leaks memory
 - 🔴 **OAuth expiry uses local clock**: `DateTimeOffset.UtcNow` compared to token expiry. Auth failures if client clock is behind server by more than 60s grace period

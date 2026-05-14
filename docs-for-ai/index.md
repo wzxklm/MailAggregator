@@ -74,7 +74,7 @@ WPF desktop email client aggregating multiple IMAP accounts with OAuth2/password
 │       │         ImapConnectionPool    SmtpConnectionSvc  │
 │       │              │                       │           │
 │       ▼              ▼                       ▼           │
-│  EmailSyncService ──→ ImapFolderDiscovery                │
+│  EmailSyncService                                        │
 │  EmailOperationService               EmailSendService    │
 │                                                          │
 │  TwoFactorAccountSvc ──→ TwoFactorCodeSvc               │

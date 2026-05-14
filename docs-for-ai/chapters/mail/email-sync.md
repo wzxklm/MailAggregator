@@ -2,11 +2,11 @@
 
 ## Overview
 
-Handles folder synchronization and message sync operations: syncing the server folder tree to local DB, performing initial sync (last 30 days), incremental sync (new UIDs), flag sync, and deletion detection. Uses `ImapConnectionPool` for connection reuse, `ImapFolderDiscovery` for folder discovery, and per-folder semaphores to prevent concurrent sync on the same folder. Single-message operations (read, delete, move, download, fetch body) are in `EmailOperationService`.
+Handles folder synchronization and message sync operations: syncing the server folder tree to local DB, performing initial sync (last 30 days), incremental sync (new UIDs), flag sync, and deletion detection. Uses `ImapConnectionPool` for connection reuse and per-folder semaphores to prevent concurrent sync on the same folder. Single-message operations (read, delete, move, download, fetch body) are in `EmailOperationService`.
 
 ## Key Behaviors
 
-- **Folder sync**: `SyncFoldersCoreAsync` delegates folder discovery to `ImapFolderDiscovery`, then upserts local `MailFolder` entities. Removes local folders no longer on server. Skips `NoSelect` container folders.
+- **Folder sync**: `SyncFoldersCoreAsync` enumerates `PersonalNamespaces[0]` if the server advertises one, otherwise falls back to `client.Inbox` only (warning logged). Upserts local `MailFolder` entities, removes folders no longer on server, skips `NoSelect` container folders. No defensive cascade or reflection workaround — non-compliant servers (NAMESPACE NIL) only expose INBOX.
 - **Initial sync**: Fetches envelopes for messages from last 30 days (`InitialSyncDays`). Bodies are NOT fetched — lazy-loaded via `EmailOperationService.FetchMessageBodyAsync` when user opens email.
 - **Incremental sync**: Fetches UIDs > `folder.MaxUid`. Refreshes `MaxUid` from DB before querying to handle concurrent sync callers. If `UidValidity` changed, resets cache and falls back to initial sync.
 - **Flag sync + deletion detection**: `SyncFlagsAndDetectDeletionsAsync` does a single IMAP FETCH of all local UIDs. UIDs in response get flag updates; UIDs absent from response are deleted locally.
@@ -37,5 +37,5 @@ Constants:
 
 ## Dependencies
 
-- Uses: `IImapConnectionPool`, `IDbContextFactory<MailAggregatorDbContext>`, `ImapFolderDiscovery` (internal), `MailConnectionHelper` (non-transient auth check)
+- Uses: `IImapConnectionPool`, `IDbContextFactory<MailAggregatorDbContext>`, `MailConnectionHelper` (non-transient auth check)
 - Used by: `SyncManager`, `MainViewModel`

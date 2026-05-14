@@ -9,7 +9,7 @@ Orchestrates the main UI: loads accounts and folder trees from DB, manages email
 | File | Content |
 |------|---------|
 | `MainViewModel.cs` | Fields, constructor, `Dispose`, `InitializeAsync`, `LoadAccountsAsync`, compose/reply/forward commands, settings/log/2FA commands, helper methods |
-| `MainViewModel.EmailList.cs` | `SelectFolderAsync`, `ShowUnifiedInboxAsync`, `FilterByAccountAsync`, `LoadEmailsForCurrentViewAsync`, `MarkAsReadAsync`, `DeleteMessageAsync`, `OnSelectedEmailChanged`, `LoadFullMessageAndMarkReadAsync`, event handlers (`OnNewEmailsReceived`, `OnFoldersSynced`, `InsertNewEmailsAsync`) |
+| `MainViewModel.EmailList.cs` | `SelectFolderAsync`, `ShowUnifiedInboxAsync`, `FilterByAccountAsync`, `LoadEmailsForCurrentViewAsync`, `MarkAsReadAsync`, `DeleteMessageAsync`, `RefreshAccountFoldersAsync`, `OnSelectedEmailChanged`, `LoadFullMessageAndMarkReadAsync`, event handlers (`OnNewEmailsReceived`, `OnFoldersSynced`, `InsertNewEmailsAsync`) |
 | `AccountFolderNode.cs` | Separate class: folder tree node with `DisplayName`, `UnreadCount`, `Account`, `Folder`, `IsAccount`, `Children` |
 
 ## Key Behaviors
@@ -20,6 +20,7 @@ Orchestrates the main UI: loads accounts and folder trees from DB, manages email
 - **CID re-fetch**: Detects cached HTML with unresolved `cid:` references and re-fetches from IMAP to resolve inline images
 - **New email events**: `SyncManager.NewEmailsReceived` handler inserts new messages at top of list via `Dispatcher.Invoke`, shows toast notification
 - **Folder refresh events**: `SyncManager.FoldersSynced` handler repopulates folder tree children for the affected account
+- **Manual folder refresh**: Right-click on an account node in the folder tree exposes "Refresh Folders" — invokes `RefreshAccountFoldersCommand` which calls `IEmailSyncService.SyncFoldersAsync` (pooled connection) and repopulates that account's children. Triggered by user when folders changed in another client; no automatic re-sync after first connection
 - **Unread counts**: Queries DB for unread counts per folder, displayed on `AccountFolderNode.UnreadCount`
 - **Account reload cancellation**: Opening account settings cancels any in-flight `LoadAccountsAsync` to abort stale IMAP connections (e.g. using old proxy settings)
 - **Log level toggle**: `CycleLogLevel` switches Serilog between INFO and DEBUG at runtime via `LoggingLevelSwitch`
@@ -30,7 +31,7 @@ Orchestrates the main UI: loads accounts and folder trees from DB, manages email
 
 `MainViewModel` (no interface — resolved directly from DI)
 
-Key commands: `LoadAccountsCommand`, `SelectFolderCommand`, `ShowUnifiedInboxCommand`, `FilterByAccountCommand`, `MarkAsReadCommand`, `DeleteMessageCommand`, `ComposeNewCommand`, `ReplyCommand`, `ReplyAllCommand`, `ForwardCommand`, `OpenTwoFactorCommand`, `OpenAccountSettingsCommand`, `CycleLogLevelCommand`
+Key commands: `LoadAccountsCommand`, `SelectFolderCommand`, `ShowUnifiedInboxCommand`, `FilterByAccountCommand`, `MarkAsReadCommand`, `DeleteMessageCommand`, `RefreshAccountFoldersCommand`, `ComposeNewCommand`, `ReplyCommand`, `ReplyAllCommand`, `ForwardCommand`, `OpenTwoFactorCommand`, `OpenAccountSettingsCommand`, `CycleLogLevelCommand`
 
 Key properties: `FolderTree`, `Emails`, `SelectedEmail`, `SelectedFolder`, `SelectedFilterAccount`, `Accounts`, `StatusText`, `IsSyncing`, `LogLevel`
 

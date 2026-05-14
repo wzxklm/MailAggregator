@@ -322,6 +322,39 @@ public partial class MainViewModel
         });
     }
 
+    [RelayCommand]
+    private async Task RefreshAccountFoldersAsync(AccountFolderNode? node)
+    {
+        if (node?.Account == null || !node.IsAccount) return;
+
+        var account = node.Account;
+        try
+        {
+            StatusText = $"Refreshing folders for {account.EmailAddress}...";
+            IsSyncing = true;
+
+            var folders = await _emailSyncService.SyncFoldersAsync(account);
+            PopulateFolderChildren(node, folders);
+            await UpdateUnreadCountsAsync();
+
+            StatusText = $"Refreshed {folders.Count} folder(s) for {account.EmailAddress}";
+        }
+        catch (IOException ex)
+        {
+            _logger.Error(ex, "Network error refreshing folders for {Email}", account.EmailAddress);
+            StatusText = $"Network error refreshing folders for {account.EmailAddress}";
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to refresh folders for {Email}", account.EmailAddress);
+            StatusText = $"Error refreshing folders for {account.EmailAddress}";
+        }
+        finally
+        {
+            IsSyncing = false;
+        }
+    }
+
     private async Task InsertNewEmailsAsync(int accountId)
     {
         try

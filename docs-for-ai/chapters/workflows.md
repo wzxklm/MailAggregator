@@ -93,14 +93,12 @@ SyncManager.StartAccountSyncAsync(account)
 │
 ├── First Connection (no folders in DB)
 │   └── EmailSyncService.SyncFoldersAsync(account, client)
-│       ├── ImapFolderDiscovery.DiscoverFoldersAsync — 4-tier cascade:
-│       │   ├── (1) PersonalNamespaces[0].GetSubfolders()
-│       │   ├── (2) Default namespace + reflection-inject root into FolderCache
-│       │   ├── (3) Root folder GetSubfolders(subscribedOnly: false)
-│       │   └── (4) INBOX-only fallback
+│       ├── If client.PersonalNamespaces.Count > 0:
+│       │   └── client.GetFoldersAsync(PersonalNamespaces[0])
+│       ├── Else (NAMESPACE NIL): folders = [client.Inbox] (log warning)
 │       ├── Map SPECIAL-USE attributes → SpecialFolderType
-│       ├── Always include INBOX
-│       ├── Create/update MailFolder entities in DB
+│       ├── Skip NoSelect container folders
+│       ├── Create/update MailFolder entities in DB; remove folders no longer on server
 │       └── Raise FoldersSynced event → UI refreshes folder tree
 │
 ├── EmailSyncService.SyncInitialAsync(account, inboxFolder)
@@ -281,7 +279,24 @@ User selects account → clicks Delete → confirms MessageBox
 └── MainViewModel refreshes account list + folder tree
 ```
 
-## 10. 2FA TOTP Management
+## 10. Manual Folder Refresh
+
+```
+User right-clicks account node in folder tree
+├── ContextMenu visible only when AccountFolderNode.IsAccount == true
+│   (DataTrigger on the tree item template; folder nodes show no menu)
+│
+User clicks "Refresh Folders"
+├── MainViewModel.RefreshAccountFoldersCommand(node)
+│   ├── EmailSyncService.SyncFoldersAsync(account)  — pooled connection
+│   │   └── Same enumeration as Workflow #3 (NAMESPACE or INBOX-only)
+│   ├── PopulateFolderChildren(node, folders)        — replace tree children in-place
+│   └── UpdateUnreadCountsAsync()                    — refresh badges
+│
+└── On IOException/Exception → status bar shows error, no event propagated
+```
+
+## 11. 2FA TOTP Management
 
 ```
 User opens 2FA window

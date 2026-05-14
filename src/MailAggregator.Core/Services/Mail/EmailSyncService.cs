@@ -19,7 +19,6 @@ public class EmailSyncService : IEmailSyncService
 
     private readonly IImapConnectionPool _connectionPool;
     private readonly IDbContextFactory<MailAggregatorDbContext> _dbContextFactory;
-    private readonly ImapFolderDiscovery _folderDiscovery;
     private readonly ILogger _logger;
 
     /// <summary>
@@ -61,7 +60,6 @@ public class EmailSyncService : IEmailSyncService
         _connectionPool = connectionPool ?? throw new ArgumentNullException(nameof(connectionPool));
         _dbContextFactory = dbContextFactory ?? throw new ArgumentNullException(nameof(dbContextFactory));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        _folderDiscovery = new ImapFolderDiscovery(logger);
     }
 
     public async Task<IReadOnlyList<LocalMailFolder>> SyncFoldersAsync(Account account, CancellationToken cancellationToken = default)
@@ -84,7 +82,16 @@ public class EmailSyncService : IEmailSyncService
 
     private async Task<IReadOnlyList<LocalMailFolder>> SyncFoldersCoreAsync(Account account, ImapClient client, MailAggregatorDbContext dbContext, CancellationToken cancellationToken)
     {
-        var imapFolders = await _folderDiscovery.DiscoverFoldersAsync(account, client, cancellationToken);
+        IList<IMailFolder> imapFolders;
+        if (client.PersonalNamespaces.Count > 0)
+        {
+            imapFolders = await client.GetFoldersAsync(client.PersonalNamespaces[0], cancellationToken: cancellationToken);
+        }
+        else
+        {
+            _logger.Warning("IMAP server for {Email} has no personal namespaces, using INBOX only", account.EmailAddress);
+            imapFolders = new List<IMailFolder> { client.Inbox };
+        }
 
         var localFolders = await dbContext.Folders
             .Where(f => f.AccountId == account.Id)
