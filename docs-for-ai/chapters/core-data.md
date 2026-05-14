@@ -11,6 +11,7 @@
 | `src/MailAggregator.Core/Models/EmailMessage.cs` | Cached email entity (headers, body, status) |
 | `src/MailAggregator.Core/Models/EmailAttachment.cs` | Attachment metadata entity |
 | `src/MailAggregator.Core/Models/TwoFactorAccount.cs` | TOTP 2FA account entity (encrypted secret) |
+| `src/MailAggregator.Core/Models/AiSettings.cs` | Singleton AI settings entity (Id=1; encrypted API key, base URL, model, language, prompts) |
 | `src/MailAggregator.Core/Models/AuthType.cs` | Enum: `Password`, `OAuth2` |
 | `src/MailAggregator.Core/Models/ConnectionEncryptionType.cs` | Enum: `None`, `Ssl`, `StartTls` |
 | `src/MailAggregator.Core/Models/SpecialFolderType.cs` | Enum: `None`, `Inbox`, `Sent`, `Drafts`, `Trash`, `Junk`, `Archive` |
@@ -37,7 +38,7 @@ EF Core `DbContext` for SQLite. Provides five `DbSet` properties covering all pe
 
 `MailAggregatorDbContext(DbContextOptions<MailAggregatorDbContext>)` — constructor injection, typically via `IDbContextFactory<MailAggregatorDbContext>`
 
-DbSets: `Accounts`, `Folders`, `Messages`, `Attachments`, `TwoFactorAccounts`
+DbSets: `Accounts`, `Folders`, `Messages`, `Attachments`, `TwoFactorAccounts`, `AiSettings`
 
 ### Internal Details
 
@@ -69,7 +70,7 @@ Static helper that ensures the SQLite database and all tables exist at app start
 ### Key Behaviors
 
 - **Initial creation**: Calls `EnsureCreatedAsync()` to create DB + tables on first run
-- **Manual table migration**: Executes `CREATE TABLE IF NOT EXISTS TwoFactorAccounts` for existing databases where `EnsureCreatedAsync` is a no-op (it only creates tables when the DB file is new)
+- **Manual table migration**: Executes `CREATE TABLE IF NOT EXISTS` for `TwoFactorAccounts` and `AiSettings` on existing databases where `EnsureCreatedAsync` is a no-op (it only creates tables when the DB file is new)
 - **Column migration**: Adds `UseIdle` column to `Accounts` via `ALTER TABLE ADD COLUMN`. Catches `SqliteException` (error code 1) when column already exists
 
 ### Interface
@@ -98,6 +99,7 @@ SQLite lacks `ALTER TABLE ADD COLUMN IF NOT EXISTS`, so the column migration use
 | `EmailMessage` | `long` | `Uid`, `MessageId`, `InReplyTo`, `References`, `FromAddress`/`FromName`, `ToAddresses`, `CcAddresses`, `BccAddresses`, `Subject`, `DateSent`, `PreviewText`, `BodyText`, `BodyHtml`, `IsRead`, `IsFlagged`, `HasAttachments`, `CachedAt` | Belongs to `Account`, belongs to `MailFolder`, has many `EmailAttachment` |
 | `EmailAttachment` | `long` | `FileName`, `ContentType`, `Size`, `LocalPath`, `ContentId` | Belongs to `EmailMessage` |
 | `TwoFactorAccount` | `int` | `Issuer`, `Label`, `EncryptedSecret`, `Algorithm`, `Digits` (default 6), `Period` (default 30) | None |
+| `AiSettings` | `int` (singleton Id=1) | `BaseUrl`, `EncryptedApiKey`, `Model`, `DefaultLanguage`, `TranslatePrompt`, `SummarizePrompt` | None |
 
 ### Enums
 

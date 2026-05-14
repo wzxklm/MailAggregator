@@ -27,6 +27,7 @@ WPF desktop email client aggregating multiple IMAP accounts with OAuth2/password
 │   │   ├── Models/                      # Account, EmailMessage, MailFolder, TwoFactorAccount, enums
 │   │   ├── Services/
 │   │   │   ├── AccountManagement/       # Account CRUD (AccountService)
+│   │   │   ├── Ai/                      # AI translate/summarize via OpenAI-compatible API
 │   │   │   ├── Auth/                    # Encryption, password, OAuth, key protectors
 │   │   │   ├── Discovery/              # IMAP/SMTP auto-discovery (6-level fallback)
 │   │   │   ├── Mail/                   # IMAP/SMTP connection, pooling, sync, send, message ops
@@ -82,6 +83,10 @@ WPF desktop email client aggregating multiple IMAP accounts with OAuth2/password
 │         ▼                                                │
 │  CredentialEncryptionService ──→ IKeyProtector           │
 │                                  (DPAPI / DevProtector)  │
+│                                                          │
+│  AiService ──→ AiSettingsService ──→ Encryption (key)    │
+│       │                                                  │
+│       └──→ HttpClient → OpenAI-compatible endpoint       │
 └──────────────────────┬───────────────────────────────────┘
                        │
                        ▼
@@ -97,8 +102,8 @@ WPF desktop email client aggregating multiple IMAP accounts with OAuth2/password
 
 | Component | Affects |
 |-----------|---------|
-| `CredentialEncryptionService` | PasswordAuthService, OAuthService, MailConnectionHelper, TwoFactorAccountService, ImapConnectionService, SmtpConnectionService |
-| `MailAggregatorDbContext` | AccountService, EmailSyncService, EmailOperationService, EmailSendService, ImapConnectionService, SmtpConnectionService, TwoFactorAccountService, MainViewModel |
+| `CredentialEncryptionService` | PasswordAuthService, OAuthService, MailConnectionHelper, TwoFactorAccountService, ImapConnectionService, SmtpConnectionService, AiSettingsService |
+| `MailAggregatorDbContext` | AccountService, EmailSyncService, EmailOperationService, EmailSendService, ImapConnectionService, SmtpConnectionService, TwoFactorAccountService, AiSettingsService, MainViewModel |
 | `MailConnectionHelper` | ImapConnectionService, SmtpConnectionService, SyncManager (shared retry/auth/token-refresh logic) |
 | `ImapConnectionService` | ImapConnectionPool, SyncManager, EmailSendService (Sent folder append) |
 | `ImapConnectionPool` | EmailSyncService, EmailOperationService, AccountService (cleanup on delete) |
@@ -115,6 +120,7 @@ WPF desktop email client aggregating multiple IMAP accounts with OAuth2/password
 | Mail | `chapters/mail/` | IMAP/SMTP connections, pooling, sync, send |
 | Sync | `chapters/sync.md` | Background sync, IDLE, polling, reconnection |
 | Two-Factor | `chapters/two-factor.md` | TOTP codes, 2FA account management |
+| AI | `chapters/ai.md` | AI translate/summarize, settings, OpenAI-compatible client |
 | Desktop | `chapters/desktop/` | WPF UI, ViewModels, views, converters, DI setup |
 | Tests | `chapters/tests.md` | Test framework, patterns, mocking, running tests |
 | Workflows | `chapters/workflows.md` | Any cross-component task |

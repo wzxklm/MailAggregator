@@ -59,6 +59,17 @@
 - **Decryption on-demand**: `GetDecryptedSecret()` decrypts every call. Callers should cache result if needed multiple times per operation
 - **Secret case normalization**: Base32 secrets normalized to uppercase on storage. Transparent but differs from raw URI input
 
+## AI (Translate / Summarize)
+
+- **Singleton settings row**: `AiSettings` table holds exactly one row with `Id = 1`. `AiSettingsService.GetAsync` returns an in-memory default when no row exists (not persisted until `SaveAsync` is called). Do not rely on `Count() > 0` to test "configured" — check `BaseUrl`/`Model` instead
+- 🔴 **API key encryption inherits DevKeyProtector risk**: Encrypted API key uses the same `CredentialEncryptionService` as IMAP/SMTP passwords. On Linux/dev, the no-op `DevKeyProtector` means the key is effectively plaintext on disk
+- **Prompt `{language}` placeholder**: `AiService` substitutes `{language}` (case-insensitive) at request time. If the user removes the placeholder from a custom prompt, the configured default language is never injected — by design, but worth noting in error reports
+- **Body content choice**: AI requests use `BodyText` when present, else regex-stripped `BodyHtml`. The regex strip is lossy (drops formatting, link URLs) — it's a token-saving heuristic, not a fidelity-preserving converter. Do not reuse `StripHtml` for display
+- **Endpoint append is one-shot**: `AiService` appends `/chat/completions` unless the URL already ends with that exact suffix. URLs with trailing query strings or alternate paths (e.g. `/v1/responses`) will get the suffix appended — only standard Chat Completions endpoints work
+- **Bearer header skipped on empty key**: When `EncryptedApiKey` is empty, `AiService` sends no `Authorization` header. This is intentional (supports local/self-hosted models like Ollama) but a misconfigured remote endpoint returning 401 looks identical to a missing-key error
+- **AiMarkdown clear is silent**: `MainViewModel.OnSelectedEmailChanging` writes the backing field `_aiMarkdown = null` directly (no PropertyChanged) so the subsequent `SelectedEmail` event is what re-renders the preview. Do not change to `AiMarkdown = null` — it would race with `SelectedEmail` and briefly render the wrong content
+- **Markdig rendering is HTML-injected, scripts disabled**: AI output is converted via Markdig and injected as a full HTML doc into the WebView2. Scripts are already disabled at the WebView level, but if the AI returns raw HTML (e.g. `<script>`), Markdig passes it through inside markdown HTML blocks by default — relying on the WebView's script-disabled setting as the only XSS line
+
 ## Desktop (WPF UI)
 
 - 🔴 **PasswordBox code-behind binding**: WPF `PasswordBox.Password` cannot be XAML-bound for security. `AddAccountWindow.xaml.cs` uses code-behind event handler. Password held unencrypted in ViewModel during wizard

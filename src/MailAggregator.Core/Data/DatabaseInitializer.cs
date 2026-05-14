@@ -26,6 +26,18 @@ public static class DatabaseInitializer
             )
             """);
 
+        await context.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS AiSettings (
+                Id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                BaseUrl TEXT NOT NULL DEFAULT '',
+                EncryptedApiKey TEXT NOT NULL DEFAULT '',
+                Model TEXT NOT NULL DEFAULT '',
+                DefaultLanguage TEXT NOT NULL DEFAULT 'English',
+                TranslatePrompt TEXT NOT NULL DEFAULT '',
+                SummarizePrompt TEXT NOT NULL DEFAULT ''
+            )
+            """);
+
         // Add UseIdle column to existing Accounts table (defaults to 1 = true).
         // SQLite ALTER TABLE ADD COLUMN throws if column already exists, so catch and ignore.
         try

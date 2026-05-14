@@ -76,6 +76,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _folderSwitchCts?.Dispose();
         _loadAccountsCts?.Cancel();
         _loadAccountsCts?.Dispose();
+        _aiCts?.Cancel();
+        _aiCts?.Dispose();
     }
 
     public async Task InitializeAsync()

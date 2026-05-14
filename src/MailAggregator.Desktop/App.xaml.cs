@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Windows;
 using MailAggregator.Core.Data;
 using MailAggregator.Core.Services.AccountManagement;
+using MailAggregator.Core.Services.Ai;
 using MailAggregator.Core.Services.Auth;
 using MailAggregator.Core.Services.Discovery;
 using MailAggregator.Core.Services.Mail;
@@ -114,6 +115,10 @@ public partial class App : System.Windows.Application
         services.AddSingleton<ITwoFactorCodeService, TwoFactorCodeService>();
         services.AddScoped<ITwoFactorAccountService, TwoFactorAccountService>();
 
+        // AI services
+        services.AddSingleton<IAiSettingsService, AiSettingsService>();
+        services.AddSingleton<IAiService, AiService>();
+
         // Sync manager
         services.AddSingleton<ISyncManager, SyncManager>();
 
@@ -124,6 +129,7 @@ public partial class App : System.Windows.Application
         services.AddTransient<ComposeViewModel>();
         services.AddTransient<TwoFactorViewModel>();
         services.AddTransient<AddTwoFactorViewModel>();
+        services.AddTransient<AiSettingsViewModel>();
 
         // Windows
         services.AddTransient<MainWindow>();

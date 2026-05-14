@@ -23,6 +23,7 @@ public class MailAggregatorDbContext : DbContext
     public DbSet<EmailMessage> Messages => Set<EmailMessage>();
     public DbSet<EmailAttachment> Attachments => Set<EmailAttachment>();
     public DbSet<TwoFactorAccount> TwoFactorAccounts => Set<TwoFactorAccount>();
+    public DbSet<AiSettings> AiSettings => Set<AiSettings>();
 
     public MailAggregatorDbContext(DbContextOptions<MailAggregatorDbContext> options)
         : base(options)
@@ -146,6 +147,15 @@ public class MailAggregatorDbContext : DbContext
             entity.Property(e => e.Issuer).IsRequired().HasMaxLength(256);
             entity.Property(e => e.Label).IsRequired().HasMaxLength(256);
             entity.Property(e => e.EncryptedSecret).IsRequired();
+        });
+
+        // AiSettings (singleton row, Id=1)
+        modelBuilder.Entity<AiSettings>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.BaseUrl).HasMaxLength(512);
+            entity.Property(e => e.Model).HasMaxLength(256);
+            entity.Property(e => e.DefaultLanguage).HasMaxLength(64);
         });
 
         // EmailAttachment

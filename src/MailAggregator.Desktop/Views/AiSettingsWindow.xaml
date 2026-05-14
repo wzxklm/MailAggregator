@@ -1,0 +1,79 @@
+<Window x:Class="MailAggregator.Desktop.Views.AiSettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="http://schemas.modernwpf.com/2019"
+        ui:WindowHelper.UseModernWindowStyle="True"
+        Title="AI Settings" Height="640" Width="560"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanResizeWithGrip">
+
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Text="AI Settings" Style="{StaticResource PageTitle}" />
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <TextBlock Text="Base URL (OpenAI-compatible)" FontSize="13" FontWeight="SemiBold" Margin="0,0,0,6" />
+                <TextBox Text="{Binding BaseUrl, UpdateSourceTrigger=PropertyChanged}"
+                         Margin="0,0,0,4" />
+                <TextBlock Text="e.g. https://api.openai.com/v1  —  /chat/completions is appended automatically"
+                           Foreground="{StaticResource SubtleBrush}" FontSize="11" Margin="0,0,0,14" />
+
+                <TextBlock Text="API Key" FontSize="13" FontWeight="SemiBold" Margin="0,0,0,6" />
+                <PasswordBox x:Name="ApiKeyBox" Margin="0,0,0,4" />
+                <TextBlock Text="{Binding ApiKeyPlaceholder}"
+                           Foreground="{StaticResource SubtleBrush}" FontSize="11" Margin="0,0,0,14" />
+
+                <TextBlock Text="Model" FontSize="13" FontWeight="SemiBold" Margin="0,0,0,6" />
+                <TextBox Text="{Binding Model, UpdateSourceTrigger=PropertyChanged}"
+                         Margin="0,0,0,4" />
+                <TextBlock Text="e.g. gpt-4o-mini, gpt-4o, claude-sonnet-4-6"
+                           Foreground="{StaticResource SubtleBrush}" FontSize="11" Margin="0,0,0,14" />
+
+                <TextBlock Text="Default Output Language" FontSize="13" FontWeight="SemiBold" Margin="0,0,0,6" />
+                <TextBox Text="{Binding DefaultLanguage, UpdateSourceTrigger=PropertyChanged}"
+                         Margin="0,0,0,4" />
+                <TextBlock Text="e.g. English, Chinese, Japanese — used in prompts via {language}"
+                           Foreground="{StaticResource SubtleBrush}" FontSize="11" Margin="0,0,0,14" />
+
+                <TextBlock Text="Translate Prompt" FontSize="13" FontWeight="SemiBold" Margin="0,0,0,6" />
+                <TextBox Text="{Binding TranslatePrompt, UpdateSourceTrigger=PropertyChanged}"
+                         TextWrapping="Wrap" AcceptsReturn="True"
+                         MinHeight="60" MaxHeight="120"
+                         VerticalScrollBarVisibility="Auto"
+                         Margin="0,0,0,14" />
+
+                <TextBlock Text="Summarize Prompt" FontSize="13" FontWeight="SemiBold" Margin="0,0,0,6" />
+                <TextBox Text="{Binding SummarizePrompt, UpdateSourceTrigger=PropertyChanged}"
+                         TextWrapping="Wrap" AcceptsReturn="True"
+                         MinHeight="60" MaxHeight="120"
+                         VerticalScrollBarVisibility="Auto"
+                         Margin="0,0,0,4" />
+
+                <Button Content="Restore Default Prompts" Style="{StaticResource ToolbarButton}"
+                        Command="{Binding RestoreDefaultsCommand}"
+                        HorizontalAlignment="Left" Margin="0,0,0,8" />
+            </StackPanel>
+        </ScrollViewer>
+
+        <TextBlock Grid.Row="2" Text="{Binding StatusText}"
+                   Foreground="{StaticResource ErrorBrush}" TextWrapping="Wrap"
+                   Margin="0,8,0,8"
+                   Visibility="{Binding StatusText, Converter={StaticResource NullToVisibility}}" />
+
+        <Border Grid.Row="3" BorderBrush="{StaticResource SeparatorBrush}" BorderThickness="0,1,0,0"
+                Padding="0,12,0,0">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Save" Style="{StaticResource PrimaryButton}"
+                        Command="{Binding SaveCommand}" Margin="0,0,8,0" />
+                <Button Content="Cancel" Style="{StaticResource ToolbarButton}"
+                        IsCancel="True" />
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>

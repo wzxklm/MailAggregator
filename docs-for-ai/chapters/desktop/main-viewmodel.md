@@ -10,6 +10,7 @@ Orchestrates the main UI: loads accounts and folder trees from DB, manages email
 |------|---------|
 | `MainViewModel.cs` | Fields, constructor, `Dispose`, `InitializeAsync`, `LoadAccountsAsync`, compose/reply/forward commands, settings/log/2FA commands, helper methods |
 | `MainViewModel.EmailList.cs` | `SelectFolderAsync`, `ShowUnifiedInboxAsync`, `FilterByAccountAsync`, `LoadEmailsForCurrentViewAsync`, `MarkAsReadAsync`, `DeleteMessageAsync`, `RefreshAccountFoldersAsync`, `OnSelectedEmailChanged`, `LoadFullMessageAndMarkReadAsync`, event handlers (`OnNewEmailsReceived`, `OnFoldersSynced`, `InsertNewEmailsAsync`) |
+| `MainViewModel.Ai.cs` | `OpenAiSettings`, `TranslateEmailAsync`, `SummarizeEmailAsync` commands, `AiMarkdown` observable, `_aiCts`, `OnSelectedEmailChanging` clears AI output |
 | `AccountFolderNode.cs` | Separate class: folder tree node with `DisplayName`, `UnreadCount`, `Account`, `Folder`, `IsAccount`, `Children` |
 
 ## Key Behaviors
@@ -26,20 +27,23 @@ Orchestrates the main UI: loads accounts and folder trees from DB, manages email
 - **Log level toggle**: `CycleLogLevel` switches Serilog between INFO and DEBUG at runtime via `LoggingLevelSwitch`
 - **Message limit**: Email list capped at 200 messages per view
 - **Service separation**: Uses `IEmailSyncService` for folder/message sync operations and `IEmailOperationService` for single-message operations (mark read, delete, fetch body)
+- **AI translate/summarize**: Toolbar Translate/Summarize commands call `IAiService` and store the returned markdown in `AiMarkdown`. `MainWindow` watches this property and renders via Markdig→HTML into the existing WebView2 (replaces email body). `OnSelectedEmailChanging` silently clears `_aiMarkdown` so switching emails falls back to the original body. AI calls share a single `_aiCts` so a second click cancels the first
+- **AI settings dialog**: `OpenAiSettings` command launches `AiSettingsWindow` (modal). Settings persisted via `IAiSettingsService` (singleton DB row, encrypted API key)
 
 ## Interface
 
 `MainViewModel` (no interface — resolved directly from DI)
 
-Key commands: `LoadAccountsCommand`, `SelectFolderCommand`, `ShowUnifiedInboxCommand`, `FilterByAccountCommand`, `MarkAsReadCommand`, `DeleteMessageCommand`, `RefreshAccountFoldersCommand`, `ComposeNewCommand`, `ReplyCommand`, `ReplyAllCommand`, `ForwardCommand`, `OpenTwoFactorCommand`, `OpenAccountSettingsCommand`, `CycleLogLevelCommand`
+Key commands: `LoadAccountsCommand`, `SelectFolderCommand`, `ShowUnifiedInboxCommand`, `FilterByAccountCommand`, `MarkAsReadCommand`, `DeleteMessageCommand`, `RefreshAccountFoldersCommand`, `ComposeNewCommand`, `ReplyCommand`, `ReplyAllCommand`, `ForwardCommand`, `OpenTwoFactorCommand`, `OpenAccountSettingsCommand`, `OpenAiSettingsCommand`, `TranslateEmailCommand`, `SummarizeEmailCommand`, `CycleLogLevelCommand`
 
-Key properties: `FolderTree`, `Emails`, `SelectedEmail`, `SelectedFolder`, `SelectedFilterAccount`, `Accounts`, `StatusText`, `IsSyncing`, `LogLevel`
+Key properties: `FolderTree`, `Emails`, `SelectedEmail`, `SelectedFolder`, `SelectedFilterAccount`, `Accounts`, `StatusText`, `IsSyncing`, `LogLevel`, `AiMarkdown`
 
 ## Internal Details
 
-**Concurrency**: Two `CancellationTokenSource` fields:
+**Concurrency**: Three `CancellationTokenSource` fields:
 - `_folderSwitchCts` — cancelled on each folder selection to abort previous folder's sync
 - `_loadAccountsCts` — cancelled on each `LoadAccountsAsync` call and when opening account settings
+- `_aiCts` — cancelled on each Translate/Summarize click to abort an in-flight AI request
 
 **Dialog launch pattern**: Resolves VM from `App.Services`, creates Window with `DataContext = vm`, calls `Show()` (non-modal) or `ShowDialog()` (modal for AccountList).
 
@@ -51,6 +55,7 @@ Key properties: `FolderTree`, `Emails`, `SelectedEmail`, `SelectedFolder`, `Sele
 - External images blocked by default (anti-tracking); `WebResourceRequested` handler returns 403 for `http://`/`https://` image requests unless user clicks "Load Images"
 - `RemoteImagesBar` shown when HTML contains external image `src` attributes
 - Falls back to `<pre>` wrapped plain text if no HTML body
+- `RenderCurrentPreview` is the single dispatcher: when `MainViewModel.AiMarkdown` is non-empty, calls `RenderMarkdown` (Markdig→HTML with inline CSS) instead of rendering the email body. Triggered by `PropertyChanged` for either `SelectedEmail` or `AiMarkdown`
 
 **Minimize-to-tray**: `OnStateChanged` hides window on minimize; `OnClosing` cancels close and hides unless `NotificationHelper.IsExitRequested` is true.
 
@@ -74,7 +79,8 @@ Key properties: `FolderTree`, `Emails`, `SelectedEmail`, `SelectedFolder`, `Sele
 - Account: `AccountService` (scoped)
 - 2FA: `TwoFactorCodeService` (singleton), `TwoFactorAccountService` (scoped)
 - Sync: `SyncManager` (singleton)
-- ViewModels: all Transient
+- AI: `AiSettingsService` (singleton), `AiService` (singleton)
+- ViewModels: all Transient (including `AiSettingsViewModel`)
 - Windows: `MainWindow` (Transient)
 
 **Shutdown**: Stops all sync, disposes connection pool, disposes DI container, disposes tray icon, flushes Serilog.

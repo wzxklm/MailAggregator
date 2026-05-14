@@ -333,3 +333,72 @@ User clicks "Copy Code"
 
 User clicks "Delete" → confirm → TwoFactorAccountService.DeleteAsync() → permanent
 ```
+
+## 12. AI Settings Configure
+
+```
+User clicks "AI" in toolbar (right of 2FA)
+├── MainViewModel.OpenAiSettingsCommand
+│   └── Opens AiSettingsWindow (modal)
+│
+├── AiSettingsViewModel.LoadAsync()
+│   ├── AiSettingsService.GetAsync()  — returns in-memory default if no row yet
+│   ├── Populate BaseUrl/Model/DefaultLanguage/Prompts
+│   └── ApiKeyPlaceholder = "(saved — leave blank to keep current)" or "(not set)"
+│
+User edits fields, optionally types new API key
+├── PasswordBox.PasswordChanged → vm.ApiKey = ApiKeyBox.Password, vm.NotifyApiKeyChanged()
+│
+User clicks Save
+├── AiSettingsViewModel.SaveAsync()
+│   ├── AiSettingsService.GetAsync() → current (may be in-memory default if first save)
+│   ├── Decide apiKeyToPersist:
+│   │   ├── ApiKey field changed + non-empty → use new ApiKey
+│   │   ├── ApiKey field changed + empty → clear stored key
+│   │   └── Unchanged → decrypt existing key, re-encrypt on save (no-op semantics)
+│   ├── AiSettingsService.SaveAsync(settings, apiKeyPlaintext)
+│   │   ├── CredentialEncryptionService.Encrypt(apiKey) if non-empty
+│   │   ├── Tracked Add (no row yet) or update existing
+│   │   └── SaveChangesAsync
+│   └── CloseRequested → DialogResult=true → Close
+```
+
+## 13. AI Translate / Summarize
+
+```
+User selects an email → clicks Translate or Summarize in toolbar
+├── MainViewModel.TranslateEmailAsync / SummarizeEmailAsync
+│   ├── If SelectedEmail == null → StatusText = "Select an email first"; abort
+│   ├── Cancel and dispose previous _aiCts; create fresh _aiCts
+│   ├── StatusText = "Translating with AI…" / "Summarizing with AI…"
+│   ├── IsSyncing = true
+│   │
+│   ├── IAiService.TranslateAsync(SelectedEmail, ct)  or  SummarizeAsync(...)
+│   │   ├── AiSettingsService.GetAsync() → load BaseUrl, Model, prompts, encrypted key
+│   │   ├── Validate BaseUrl + Model present → else throw InvalidOperationException
+│   │   ├── GetDecryptedApiKey(settings) → plaintext (may be empty)
+│   │   ├── Substitute {language} in prompt → systemPrompt
+│   │   ├── Build userContent: "Subject:…\nFrom:…\nTo:…\n\n" + (BodyText or StripHtml(BodyHtml))
+│   │   ├── POST {baseUrl}/chat/completions  (stream: false)
+│   │   │   ├── Authorization: Bearer {apiKey}  — only if apiKey non-empty
+│   │   │   └── Body: { model, messages:[{system}, {user}] }
+│   │   ├── On non-2xx → throw HttpRequestException with truncated body
+│   │   └── Parse choices[0].message.content → return markdown string
+│   │
+│   ├── AiMarkdown = markdown   (fires PropertyChanged)
+│   └── StatusText = "Translated" / "Summarized"
+│
+├── On exception → log + StatusText = "AI error: {message}"
+│
+└── MainWindow.ViewModel_PropertyChanged sees AiMarkdown change
+    └── RenderCurrentPreview → RenderMarkdown(markdown)
+        ├── Markdig pipeline: UseAdvancedExtensions + UseSoftlineBreakAsHardlineBreak
+        ├── Wrap HTML in <html><head><style>…</style></head><body>{html}</body></html>
+        ├── RemoteImagesBar.Visibility = Collapsed
+        └── EmailWebView.NavigateToString(doc)
+
+User selects a different email
+├── MainViewModel.OnSelectedEmailChanging → _aiMarkdown = null  (silent — no event)
+├── Backing field updates → PropertyChanged("SelectedEmail")
+└── MainWindow.RenderCurrentPreview → AiMarkdown empty → re-render original body
+```

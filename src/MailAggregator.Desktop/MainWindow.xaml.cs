@@ -113,6 +113,22 @@ public partial class MainWindow : Window
         if (e.PropertyName == nameof(MainViewModel.SelectedEmail))
         {
             _allowExternalImages = false;
+            RenderCurrentPreview();
+        }
+        else if (e.PropertyName == nameof(MainViewModel.AiMarkdown))
+        {
+            RenderCurrentPreview();
+        }
+    }
+
+    private void RenderCurrentPreview()
+    {
+        if (!string.IsNullOrEmpty(_viewModel.AiMarkdown))
+        {
+            RenderMarkdown(_viewModel.AiMarkdown);
+        }
+        else
+        {
             var email = _viewModel.SelectedEmail;
             UpdateEmailPreview(email?.BodyHtml, email?.BodyText);
         }
@@ -145,12 +161,43 @@ public partial class MainWindow : Window
         }
     }
 
+    private void RenderMarkdown(string markdown)
+    {
+        if (!_webViewInitialized) return;
+        RemoteImagesBar.Visibility = Visibility.Collapsed;
+
+        var pipeline = new Markdig.MarkdownPipelineBuilder()
+            .UseAdvancedExtensions()
+            .UseSoftlineBreakAsHardlineBreak()
+            .Build();
+        var bodyHtml = Markdig.Markdown.ToHtml(markdown, pipeline);
+        var doc = $$"""
+            <!DOCTYPE html>
+            <html><head><meta charset="utf-8"><style>
+                body { font-family: 'Segoe UI', sans-serif; font-size: 14px; line-height: 1.55; color: #1a1a1a; padding: 16px; }
+                h1, h2, h3, h4 { margin-top: 1em; margin-bottom: 0.4em; }
+                h1 { font-size: 1.6em; } h2 { font-size: 1.35em; } h3 { font-size: 1.15em; }
+                p { margin: 0.6em 0; }
+                ul, ol { padding-left: 1.4em; }
+                li { margin: 0.2em 0; }
+                code { background: #f3f3f3; padding: 1px 4px; border-radius: 3px; font-family: Consolas, monospace; font-size: 0.95em; }
+                pre { background: #f7f7f7; padding: 10px; border-radius: 4px; overflow: auto; }
+                pre code { background: transparent; padding: 0; }
+                blockquote { border-left: 3px solid #0078D4; margin: 0.6em 0; padding: 2px 12px; color: #555; background: #f7faff; }
+                table { border-collapse: collapse; margin: 0.6em 0; }
+                th, td { border: 1px solid #d0d0d0; padding: 4px 8px; }
+                hr { border: none; border-top: 1px solid #e0e0e0; margin: 1.2em 0; }
+                a { color: #0078D4; }
+            </style></head><body>{{bodyHtml}}</body></html>
+            """;
+        EmailWebView.NavigateToString(doc);
+    }
+
     private void LoadRemoteImages_Click(object sender, RoutedEventArgs e)
     {
         _allowExternalImages = true;
         RemoteImagesBar.Visibility = Visibility.Collapsed;
-        var email = _viewModel.SelectedEmail;
-        UpdateEmailPreview(email?.BodyHtml, email?.BodyText);
+        RenderCurrentPreview();
     }
 
     private static bool HasExternalImages(string? html)
