@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using MailAggregator.Desktop.ViewModels;
+using Markdig;
 using Microsoft.Web.WebView2.Core;
 
 namespace MailAggregator.Desktop;
@@ -166,11 +167,11 @@ public partial class MainWindow : Window
         if (!_webViewInitialized) return;
         RemoteImagesBar.Visibility = Visibility.Collapsed;
 
-        var pipeline = new Markdig.MarkdownPipelineBuilder()
+        var pipeline = new MarkdownPipelineBuilder()
             .UseAdvancedExtensions()
             .UseSoftlineBreakAsHardlineBreak()
             .Build();
-        var bodyHtml = Markdig.Markdown.ToHtml(markdown, pipeline);
+        var bodyHtml = Markdown.ToHtml(markdown, pipeline);
         var doc = $$"""
             <!DOCTYPE html>
             <html><head><meta charset="utf-8"><style>
